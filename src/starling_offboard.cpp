@@ -112,6 +112,9 @@ public:
         // Used to stop the drone when it reaches the waypoint
         stop_vel << 0.0, 0.0, 0.0, 0.0;
 
+        // Holds the current velocity from the mission to be sent to the px4
+        vel_ned << 0.0, 0.0, 0.0, 0.0;
+
         // QoS
 		rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
 		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
@@ -130,7 +133,7 @@ public:
 			pos_msg_ = *msg;
 		});
 
-        global_pos_subscription_ = this->create_subscription<px4_msgs::msg::SensorGps>(ns + "/fmu/out/vehicle_global_pos", qos, [this](const px4_msgs::msg::VehicleGlobalPosition::UniquePtr msg){
+        global_pos_subscription_ = this->create_subscription<px4_msgs::msg::VehicleGlobalPosition>(ns + "/fmu/out/vehicle_global_pos", qos, [this](const px4_msgs::msg::VehicleGlobalPosition::UniquePtr msg){
             global_pos_msg_ = *msg;
         });
 
@@ -139,16 +142,12 @@ public:
         });
 
         // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
-        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(ns + "/cmd_vel", qos, std::bind(&StarlingOffboard::publish_trajectory_setpoint, this, std::placeholders::_1));
+        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(ns + "/cmd_vel", qos, std::bind(&StarlingOffboard::update_vel, this, std::placeholders::_1));
         trajectory_setpoint_publisher_ = this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(ns + "/fmu/in/trajectory_setpoint", qos);
 
         // Position Translation (VehicleLocalPosition [PX4] to PoseStamped [GNN])
         vehicle_local_position_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(ns + "/fmu/out/vehicle_local_position", qos, std::bind(&StarlingOffboard::publish_pose, this, std::placeholders::_1));
         pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(ns + "/pose", qos);
-
-
-		// Set the home position for the local frame 
-		//set_home(LAT, LON, ALT);
 
         // 10Hz Timer
 		auto timer_ = this->create_wall_timer(100ms, std::bind(&StarlingOffboard::timer_callback, this));
@@ -160,6 +159,7 @@ public:
 private:
 	std::atomic<uint64_t> timestamp_;   //!< common synced timestamped
 	uint64_t offboard_setpoint_counter_;   //!< counter for the number of setpoints sent
+    rclcpp::Time time_last_vel_update;
                                         
     // Timer drives the main loop
 	rclcpp::TimerBase::SharedPtr timer_;
@@ -191,6 +191,7 @@ private:
 
 	// Waypoints are still used as goals
     float scale;
+    Eigen::Vector4f vel_ned;
     Eigen::Vector4f stop_vel;
     Eigen::Vector4f takeoff_pos;
     Eigen::Matrix<float, 4, 4> waypts;
@@ -220,8 +221,7 @@ private:
 	void set_home(const double lat, const double lon, const float alt);
     void timer_callback();
 
-    void publish_trajectory_setpoint(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel);
-    //void publish_pose(const px4_msgs::msg::VehicleLocalPosition::ConstSharedPtr vehicle_local_position, const px4_msgs::msg::VehicleAttitude::ConstSharedPtr vehicle_attitude);
+    void update_vel(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel);
     void publish_pose(const px4_msgs::msg::VehicleLocalPosition::SharedPtr vehicle_local_position);
 };
 
@@ -292,18 +292,20 @@ void StarlingOffboard::timer_callback(){
 
         // GNN, Square, etc..
         case State::MISSION:
+            
+            // offboard_control_mode needs to be paired with trajectory_setpoint
+            // If the message rate drops bellow 2Hz, the drone exits offboard control mode
             publish_offboard_control_mode(false, true);
             
-            // compute the new velocity based on where the drone is wrt to the next waypoint
-            Eigen::Vector4f new_vel = compute_vel(waypts.row(way_pt_idx));
-            Eigen::Vector4f vel_ned = transform_mission_to_ned(new_vel); 
-            publish_trajectory_setpoint_vel(vel_ned);
-
-            // error calculation
-            waypt_reached = this->has_reached_pos(waypts.row(way_pt_idx));
-            if (waypt_reached) {
-                way_pt_idx = (way_pt_idx + 1) % 4;
+            rclcpp::Duration duration = this->get_clock()->now() - time_last_vel_update;
+            if (duration.seconds() > 0.5) {
+                RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
+                publish_trajectory_setpoint_vel(stop_vel);
             }
+            else {
+                publish_trajectory_setpoint_vel(vel_ned);
+            }
+
             break;
     }
 }
@@ -433,7 +435,7 @@ void StarlingOffboard::publish_trajectory_setpoint_pos(const Eigen::Vector4f& ta
 /**
  * @brief Publish the trajectory setpoint (TwistStamped) to the PX4
  */
-void StarlingOffboard::publish_trajectory_setpoint(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel)
+void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel)
 {
     // Proportional controller to maintain altitude
     const float kP = -1.0;
@@ -447,15 +449,9 @@ void StarlingOffboard::publish_trajectory_setpoint(const geometry_msgs::msg::Twi
                                0.0);
     
     // Transform the velocity from the mission frame to NED
-    const Eigen::Vector4f vel_ned = transform_mission_to_ned(vel_mission);
+    vel_ned = transform_mission_to_ned(vel_mission);
 
-    // Publish the TrajectorySetpoint
-    px4_msgs::msg::TrajectorySetpoint px4_msg{};
-	px4_msg.position = {std::nanf(""), std::nanf(""), std::nanf("")}; // required for vel control in px4
-	px4_msg.velocity = {vel_ned[0], vel_ned[1], vel_ned[2]};
-	px4_msg.yaw = 0.0; // [-PI:PI] 
-	px4_msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-	trajectory_setpoint_publisher_->publish(px4_msg);
+    time_last_vel_update = this->get_clock()->now();
 }
 
 /**
