@@ -17,9 +17,31 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(example_interfaces REQUIRED)
+find_package(px4_msgs REQUIRED)
+find_package(eigen3_cmake_module REQUIRED)
+find_package(Eigen3 REQUIRED)
+#find_package(GeographicLib REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(rosbag2_cpp REQUIRED)
+find_package(message_filters REQUIRED)
+
+include_directories(${EIGEN3_INCLUDE_DIR})
+
+# executables
+add_executable(starling_offboard_cpp src/starling_offboard.cpp)
+ament_target_dependencies(starling_offboard_cpp 
+    rclcpp 
+    px4_msgs 
+    Eigen3 
+    eigen3_cmake_module 
+    geometry_msgs 
+    sensor_msgs 
+    rosbag2_cpp
+)
+install(TARGETS starling_offboard_cpp DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
