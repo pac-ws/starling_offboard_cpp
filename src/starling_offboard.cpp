@@ -210,9 +210,10 @@ void StarlingOffboard::timer_callback(){
     switch (state_) {
 
         case State::IDLE:
+            // Compute the translation from the home position to the current (start up position)
+            translation = compute_translation(LAT_HOME, LON_HOME, ALT_HOME, global_pos_msg_.lat, global_pos_msg_.lon, global_pos_msg_.alt);
 
-            
-
+            // TODO 
             if (takeoff_cmd_received) {
                 state_ = State::TAKEOFF;
                 takeoff_cmd_received = false;
@@ -271,6 +272,21 @@ void StarlingOffboard::timer_callback(){
             }
             break;
     }
+}
+
+/**
+ * @brief Compute the translation from the reference position to the current position
+ */
+// TODO double check this!!
+Eigen::Vector3f StarlingOffboard::compute_translation(const double ref_lat, const double ref_lon, const float ref_alt, const double lat, const double lon, const float alt){
+    const double R = 6371000.0; // Earth radius in meters
+    const double d_lat = (lat - ref_lat) * M_PI / 180.0;
+    const double d_lon = (lon - ref_lon) * M_PI / 180.0;
+    const double d_alt = alt - ref_alt;
+    const double x = R * d_lat;
+    const double y = R * d_lon * cos(lat * M_PI / 180.0);
+    const double z = d_alt;
+    return Eigen::Vector3f(x, y, z);
 }
 
 /**
