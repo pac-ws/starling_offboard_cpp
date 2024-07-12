@@ -1,5 +1,7 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <px4_msgs/msg/offboard_control_mode.hpp>
 #include <px4_msgs/msg/trajectory_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
@@ -14,6 +16,7 @@
 #include <iostream>
 #include <sstream>
 #include <cmath>
+#include <algorithm>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -23,6 +26,9 @@
 #define LON_HOME -75.19767453
 #define ALT_HOME 12.346199
 #define HEADING_NED_TO_FRD 2.725
+
+#define _USE_MATH_DEFINES
+#include <math.h>
 
 // Square mission parameters
 #define S_Z -1.0
@@ -59,6 +65,11 @@ const unsigned char* toChar(State state){
 	}
 }
 
+template <typename T>
+T clamp(T val, T min, T max){
+    return std::max(min, std::min(val, max));
+}
+
 std::ostream& operator<<(std::ostream& os, const unsigned char* state){
 	return os << reinterpret_cast<const char*>(state);
 }
@@ -80,15 +91,15 @@ public:
         this->declare_parameter<float>("takeoff_z", -1.0);
         this->get_parameter("takeoff_z", takeoff_z);
 
-        // Transformation matrix from NED to FRD
-        x_offset = 0.0;
-        y_offset = 0.0;
-        z_offset = 0.0;
+        this->declare_parameter<float>("scale", 1.0);
+        this->get_parameter("scale", scale);
 
-        translation << x_offset, y_offset, z_offset;
+        // Number of waypoints to set before attempting to enter offboard mode
+		offboard_setpoint_counter_ = 0;
+        
+        // Transformation matrix from NED to FRD
         rotation = Eigen::AngleAxisf(HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
         T_miss_ned.block<3,3>(0,0) = rotation;
-        T_miss_ned.block<3,1>(0,3) = translation;
 
         // Square mission waypoints
         way_pt_idx = 0;
@@ -107,7 +118,7 @@ public:
         
         // Pubs and Subs
 		offboard_control_mode_publisher_ = this->create_publisher<OffboardControlMode>(ns + "/fmu/in/offboard_control_mode", 10);
-		trajectory_setpoint_publisher_ = this->create_publisher<TrajectorySetpoint>(ns + "/fmu/in/trajectory_setpoint", 10);
+		//trajectory_setpoint_publisher_ = this->create_publisher<TrajectorySetpoint>(ns + "/fmu/in/trajectory_setpoint", 10);
 		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>(ns + "/fmu/in/vehicle_command", 10);
         drone_status_publisher_ = this->create_publisher<std_msgs::msg::String>(ns + "/drone_status", qos);
 
@@ -127,7 +138,14 @@ public:
             takeoff_cmd_received = msg->data;
         });
 
-		offboard_setpoint_counter_ = 0;
+        // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
+        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(ns + "/cmd_vel", qos, std::bind(&StarlingOffboard::publish_trajectory_setpoint, this, std::placeholders::_1));
+        trajectory_setpoint_publisher_ = this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(ns + "/fmu/in/trajectory_setpoint", qos);
+
+        // Position Translation (VehicleLocalPosition [PX4] to PoseStamped [GNN])
+        vehicle_local_position_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(ns + "/fmu/out/vehicle_local_position", qos, std::bind(&StarlingOffboard::publish_pose, this, std::placeholders::_1));
+        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(ns + "/pose", qos);
+
 
 		// Set the home position for the local frame 
 		//set_home(LAT, LON, ALT);
@@ -147,9 +165,15 @@ private:
 	rclcpp::TimerBase::SharedPtr timer_;
 
     // Publishers and Subscribers
+    // From the interface
+    rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr gnn_vel_subscription_;
+    rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
+    rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr vehicle_local_position_subscription_;
+    rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_publisher_;
+
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr drone_status_publisher_;
 	rclcpp::Publisher<OffboardControlMode>::SharedPtr offboard_control_mode_publisher_;
-	rclcpp::Publisher<TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
+    //rclcpp::Publisher<TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
 	rclcpp::Publisher<VehicleCommand>::SharedPtr vehicle_command_publisher_;
 
     rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr status_sub_;
@@ -166,6 +190,7 @@ private:
 	bool waypt_reached = false;
 
 	// Waypoints are still used as goals
+    float scale;
     Eigen::Vector4f stop_vel;
     Eigen::Vector4f takeoff_pos;
     Eigen::Matrix<float, 4, 4> waypts;
@@ -186,7 +211,7 @@ private:
     // Function prototypes
     Eigen::Vector3f compute_translation(const double ref_lat, const double ref_lon, const float ref_alt, const double lat, const double lon, const float alt);
     Eigen::Vector4f compute_vel(const Eigen::Vector4f& target_pos);
-    Eigen::Vector4f transform_mission_to_ned(Eigen::Vector4f &vec_mission);
+    Eigen::Vector4f transform_mission_to_ned(const Eigen::Vector4f &vec_mission);
 	void publish_offboard_control_mode(const bool is_pos, const bool is_vel);
 	void publish_trajectory_setpoint_vel(const Eigen::Vector4f& target_vel);
 	void publish_trajectory_setpoint_pos(const Eigen::Vector4f& target_pos);
@@ -194,6 +219,10 @@ private:
 	bool has_reached_pos(const Eigen::Vector4f& target_pos);
 	void set_home(const double lat, const double lon, const float alt);
     void timer_callback();
+
+    void publish_trajectory_setpoint(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel);
+    //void publish_pose(const px4_msgs::msg::VehicleLocalPosition::ConstSharedPtr vehicle_local_position, const px4_msgs::msg::VehicleAttitude::ConstSharedPtr vehicle_attitude);
+    void publish_pose(const px4_msgs::msg::VehicleLocalPosition::SharedPtr vehicle_local_position);
 };
 
 /**
@@ -212,17 +241,22 @@ void StarlingOffboard::timer_callback(){
         case State::IDLE:
             // Compute the translation from the home position to the current (start up position)
             translation = compute_translation(LAT_HOME, LON_HOME, ALT_HOME, global_pos_msg_.lat, global_pos_msg_.lon, global_pos_msg_.alt);
+            T_miss_ned.block<3,1>(0,3) = translation;
 
             // TODO 
+            /*
             if (takeoff_cmd_received) {
                 state_ = State::TAKEOFF;
                 takeoff_cmd_received = false;
             }
+            */
+
+            // TODO
+            state_ = State::TAKEOFF;
             break;
 
         case State::TAKEOFF:
         case State::LANDING:
-
             if (offboard_setpoint_counter_ >= 10) {
                 // Change to Offboard mode after 10 setpoints
                 this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
@@ -292,7 +326,7 @@ Eigen::Vector3f StarlingOffboard::compute_translation(const double ref_lat, cons
 /**
  * @brief Transform the position from mission frame to NED
  */
-Eigen::Vector4f StarlingOffboard::transform_mission_to_ned(Eigen::Vector4f &vec_mission){
+Eigen::Vector4f StarlingOffboard::transform_mission_to_ned(const Eigen::Vector4f &vec_mission){
     Eigen::Vector4f vec_ned = T_miss_ned * vec_mission;
     return vec_ned;
 }
@@ -394,6 +428,47 @@ void StarlingOffboard::publish_trajectory_setpoint_pos(const Eigen::Vector4f& ta
 	msg.yaw = 0.0; // [-PI:PI]
 	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
 	trajectory_setpoint_publisher_->publish(msg);
+}
+
+/**
+ * @brief Publish the trajectory setpoint (TwistStamped) to the PX4
+ */
+void StarlingOffboard::publish_trajectory_setpoint(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel)
+{
+    // Proportional controller to maintain altitude
+    const float kP = -1.0;
+    const float err_z = (pos_msg_.z - takeoff_z);
+
+    // Clamp the GNN velocity to [-1, 1], with mission scale factor
+    const Eigen::Vector4f vel_mission (
+                               (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -3.0, 3.0), 
+                               (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -3.0, 3.0),
+                               -kP * err_z,
+                               0.0);
+    
+    // Transform the velocity from the mission frame to NED
+    const Eigen::Vector4f vel_ned = transform_mission_to_ned(vel_mission);
+
+    // Publish the TrajectorySetpoint
+    px4_msgs::msg::TrajectorySetpoint px4_msg{};
+	px4_msg.position = {std::nanf(""), std::nanf(""), std::nanf("")}; // required for vel control in px4
+	px4_msg.velocity = {vel_ned[0], vel_ned[1], vel_ned[2]};
+	px4_msg.yaw = 0.0; // [-PI:PI] 
+	px4_msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+	trajectory_setpoint_publisher_->publish(px4_msg);
+}
+
+/**
+ * @brief Publish the pose (PoseStamped) to the GNN
+ */
+void StarlingOffboard::publish_pose(const px4_msgs::msg::VehicleLocalPosition::SharedPtr vehicle_local_position)
+{
+    geometry_msgs::msg::PoseStamped gnn_pose;
+    gnn_pose.header.stamp = this->get_clock()->now();
+    gnn_pose.pose.position.x = vehicle_local_position->x;
+    gnn_pose.pose.position.y = vehicle_local_position->y;
+    gnn_pose.pose.position.z = vehicle_local_position->z;
+    pose_publisher_->publish(gnn_pose);
 }
 
 /**
