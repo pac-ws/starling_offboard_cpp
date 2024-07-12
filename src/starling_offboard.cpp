@@ -22,9 +22,9 @@
 #include <Eigen/Geometry>
 
 // Origins and offsets
-#define LAT_HOME 39.940544
-#define LON_HOME -75.19767453
-#define ALT_HOME 12.346199
+#define LAT_HOME 39.941349055103075
+#define LON_HOME -75.19878530679716
+#define ALT_HOME 11.745387077331543
 #define HEADING_NED_TO_FRD 2.725
 
 #define _USE_MATH_DEFINES
@@ -40,6 +40,7 @@ using namespace px4_msgs::msg;
 
 enum class State {
 	IDLE,
+    ARMING,
 	TAKEOFF,
 	MISSION,
 	LANDING
@@ -48,6 +49,7 @@ enum class State {
 const std::string to_string(State state){
     switch(state){
         case State::IDLE: return "IDLE";
+        case State::ARMING: return "ARMING";
         case State::TAKEOFF: return "TAKEOFF";
         case State::MISSION: return "MISSION";
         case State::LANDING: return "LANDING";
@@ -58,6 +60,7 @@ const std::string to_string(State state){
 const unsigned char* toChar(State state){
 	switch(state){
 		case State::IDLE: return reinterpret_cast<const unsigned char*>("IDLE");
+		case State::ARMING: return reinterpret_cast<const unsigned char*>("ARMING");
 		case State::TAKEOFF: return reinterpret_cast<const unsigned char*>("TAKEOFF");
 		case State::MISSION: return reinterpret_cast<const unsigned char*>("MISSION");
 		case State::LANDING: return reinterpret_cast<const unsigned char*>("LANDING");
@@ -84,73 +87,69 @@ public:
 	StarlingOffboard() : Node("starling_offboard")
 	{
         // Parameters
-        this->declare_parameter<std::string>("namespace", "r9");
-        std::string ns;
-        this->get_parameter("namespace", ns);
-
         this->declare_parameter<float>("takeoff_z", -1.0);
         this->get_parameter("takeoff_z", takeoff_z);
 
         this->declare_parameter<float>("scale", 1.0);
         this->get_parameter("scale", scale);
 
+        // For consistency...
+        clock_ = this->get_clock();
+
         // Number of waypoints to set before attempting to enter offboard mode
 		offboard_setpoint_counter_ = 0;
         
-        // Transformation matrix from NED to FRD
-        rotation = Eigen::AngleAxisf(HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
-        T_miss_ned.block<3,3>(0,0) = rotation;
+        // Transformation matrix from Mission to NED
+        inv_rotation = Eigen::AngleAxisf(-HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        T_miss_ned.block<3,3>(0,0) = inv_rotation;
 
-        // Square mission waypoints
-        way_pt_idx = 0;
+        // Transformation matrix from NED to Mission
+        rotation = Eigen::AngleAxisf(HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        T_ned_miss.block<3,3>(0,0) = rotation;
+
         takeoff_pos << 0.0, 0.0, takeoff_z, 0.0;
-        waypts << 0.0, 0.0, S_Z, 0.0,
-                  S_X, 0.0, S_Z, 0.0,
-                  S_X, S_X, S_Z, 0.0,
-                  0.0, S_X, S_Z, 0.0;
 
         // Used to stop the drone when it reaches the waypoint
-        stop_vel << 0.0, 0.0, 0.0, 0.0;
+        stop_vel << 0.0, 0.0, 0.0, 1.0;
 
         // Holds the current velocity from the mission to be sent to the px4
-        vel_ned << 0.0, 0.0, 0.0, 0.0;
+        vel_ned << 0.0, 0.0, 0.0, 1.0;
 
         // QoS
 		rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
 		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
         
         // Pubs and Subs
-		offboard_control_mode_publisher_ = this->create_publisher<OffboardControlMode>(ns + "/fmu/in/offboard_control_mode", 10);
-		//trajectory_setpoint_publisher_ = this->create_publisher<TrajectorySetpoint>(ns + "/fmu/in/trajectory_setpoint", 10);
-		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>(ns + "/fmu/in/vehicle_command", 10);
-        drone_status_publisher_ = this->create_publisher<std_msgs::msg::String>(ns + "/drone_status", qos);
+		offboard_control_mode_publisher_ = this->create_publisher<OffboardControlMode>("fmu/in/offboard_control_mode", qos);
+		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>("fmu/in/vehicle_command", qos);
+        drone_status_publisher_ = this->create_publisher<std_msgs::msg::String>("drone_status", qos);
 
-        status_sub_ = this->create_subscription<px4_msgs::msg::VehicleStatus>(ns + "/fmu/out/vehicle_status", qos, [this](const px4_msgs::msg::VehicleStatus::UniquePtr msg){
+        status_sub_ = this->create_subscription<px4_msgs::msg::VehicleStatus>("fmu/out/vehicle_status", qos, [this](const px4_msgs::msg::VehicleStatus::UniquePtr msg){
             arming_state_ = msg->arming_state;
         });
 
-		pos_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(ns + "/fmu/out/vehicle_local_position", qos, [this](const px4_msgs::msg::VehicleLocalPosition::UniquePtr msg){
+		pos_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>("fmu/out/vehicle_local_position", qos, [this](const px4_msgs::msg::VehicleLocalPosition::UniquePtr msg){
 			pos_msg_ = *msg;
 		});
 
-        global_pos_subscription_ = this->create_subscription<px4_msgs::msg::VehicleGlobalPosition>(ns + "/fmu/out/vehicle_global_pos", qos, [this](const px4_msgs::msg::VehicleGlobalPosition::UniquePtr msg){
+        global_pos_subscription_ = this->create_subscription<px4_msgs::msg::VehicleGlobalPosition>("fmu/out/vehicle_global_position", qos, [this](const px4_msgs::msg::VehicleGlobalPosition::UniquePtr msg){
             global_pos_msg_ = *msg;
         });
 
-        takeoff_subscription_ = this->create_subscription<std_msgs::msg::Bool>(ns + "/takeoff", qos, [this](const std_msgs::msg::Bool::UniquePtr msg){
+        takeoff_subscription_ = this->create_subscription<std_msgs::msg::Bool>("takeoff", qos, [this](const std_msgs::msg::Bool::UniquePtr msg){
             takeoff_cmd_received = msg->data;
         });
 
         // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
-        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(ns + "/cmd_vel", qos, std::bind(&StarlingOffboard::update_vel, this, std::placeholders::_1));
-        trajectory_setpoint_publisher_ = this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(ns + "/fmu/in/trajectory_setpoint", qos);
+        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("cmd_vel", qos, std::bind(&StarlingOffboard::update_vel, this, std::placeholders::_1));
+        trajectory_setpoint_publisher_ = this->create_publisher<px4_msgs::msg::TrajectorySetpoint>("fmu/in/trajectory_setpoint", qos);
 
         // Position Translation (VehicleLocalPosition [PX4] to PoseStamped [GNN])
-        vehicle_local_position_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>(ns + "/fmu/out/vehicle_local_position", qos, std::bind(&StarlingOffboard::publish_pose, this, std::placeholders::_1));
-        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(ns + "/pose", qos);
+        vehicle_local_position_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>("fmu/out/vehicle_local_position", qos, std::bind(&StarlingOffboard::publish_pose, this, std::placeholders::_1));
+        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("pose", qos);
 
         // 10Hz Timer
-		auto timer_ = this->create_wall_timer(100ms, std::bind(&StarlingOffboard::timer_callback, this));
+        timer_ = this->create_wall_timer(100ms, std::bind(&StarlingOffboard::timer_callback, this));
 	}
 
 	void arm();
@@ -163,6 +162,7 @@ private:
                                         
     // Timer drives the main loop
 	rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Clock::SharedPtr clock_;
 
     // Publishers and Subscribers
     // From the interface
@@ -173,7 +173,6 @@ private:
 
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr drone_status_publisher_;
 	rclcpp::Publisher<OffboardControlMode>::SharedPtr offboard_control_mode_publisher_;
-    //rclcpp::Publisher<TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
 	rclcpp::Publisher<VehicleCommand>::SharedPtr vehicle_command_publisher_;
 
     rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr status_sub_;
@@ -204,25 +203,28 @@ private:
     double z_offset;
 
     Eigen::Vector3f translation;
+    Eigen::Vector3f inv_translation;
     Eigen::Matrix3f rotation;
+    Eigen::Matrix3f inv_rotation;
     Eigen::Matrix<float, 4, 4> T_miss_ned = Eigen::Matrix4f::Identity();
+    Eigen::Matrix<float, 4, 4> T_ned_miss = Eigen::Matrix4f::Identity();
 
 	State state_ = State::IDLE;
 
     // Function prototypes
+    //rclcpp::Publisher<TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
     Eigen::Vector3f compute_translation(const double ref_lat, const double ref_lon, const float ref_alt, const double lat, const double lon, const float alt);
     Eigen::Vector4f compute_vel(const Eigen::Vector4f& target_pos);
-    Eigen::Vector4f transform_mission_to_ned(const Eigen::Vector4f &vec_mission);
+    Eigen::Vector4f tform(const Eigen::Vector4f &vec, const Eigen::Matrix<float, 4, 4> &Tf);
 	void publish_offboard_control_mode(const bool is_pos, const bool is_vel);
 	void publish_trajectory_setpoint_vel(const Eigen::Vector4f& target_vel);
 	void publish_trajectory_setpoint_pos(const Eigen::Vector4f& target_pos);
 	void publish_vehicle_command(uint16_t command, float param1 = 0.0, float param2 = 0.0, double param5 = 0.0, double param6 = 0.0, float param7 = 0.0);
 	bool has_reached_pos(const Eigen::Vector4f& target_pos);
 	void set_home(const double lat, const double lon, const float alt);
-    void timer_callback();
-
     void update_vel(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel);
     void publish_pose(const px4_msgs::msg::VehicleLocalPosition::SharedPtr vehicle_local_position);
+    void timer_callback();
 };
 
 /**
@@ -230,6 +232,7 @@ private:
  */
 void StarlingOffboard::timer_callback(){
 
+    //std::cout << "State: " << state_ << std::endl;
     // Publish the current state
     auto state_msg = std_msgs::msg::String();
     state_msg.data = to_string(state_);
@@ -241,7 +244,15 @@ void StarlingOffboard::timer_callback(){
         case State::IDLE:
             // Compute the translation from the home position to the current (start up position)
             translation = compute_translation(LAT_HOME, LON_HOME, ALT_HOME, global_pos_msg_.lat, global_pos_msg_.lon, global_pos_msg_.alt);
-            T_miss_ned.block<3,1>(0,3) = translation;
+            inv_translation = -translation;
+
+            std::cout << "Translation: " << translation << std::endl;
+            
+            // Don't need translation for velocity
+            //T_miss_ned.block<3,1>(0,3) = inv_translation;
+            
+            // Need translation for position
+            T_ned_miss.block<3,1>(0,3) = translation;
 
             // TODO 
             /*
@@ -252,12 +263,12 @@ void StarlingOffboard::timer_callback(){
             */
 
             // TODO
-            state_ = State::TAKEOFF;
+            state_ = State::ARMING;
+            std::cout << "State: " << state_ << std::endl;
             break;
 
-        case State::TAKEOFF:
-        case State::LANDING:
-            if (offboard_setpoint_counter_ >= 10) {
+        case State::ARMING:
+            if (offboard_setpoint_counter_ == 10) {
                 // Change to Offboard mode after 10 setpoints
                 this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
 
@@ -267,10 +278,29 @@ void StarlingOffboard::timer_callback(){
                 if (arming_state_ == 2) {
                     RCLCPP_INFO(this->get_logger(), "Vehicle armed");
                     state_ = State::TAKEOFF;
+                    std::cout << "State: " << state_ << std::endl;
                 }
-                else
+                else {
                     RCLCPP_INFO(this->get_logger(), "Vehicle not armed");
+                    // Retry
+                    offboard_setpoint_counter_ = 0;
+                }
+                    
             }
+
+            // Send 10 setpoints before attempting to arm
+            // offboard_control_mode needs to be paired with trajectory_setpoint
+            publish_offboard_control_mode(true, false);
+            publish_trajectory_setpoint_pos(takeoff_pos);
+            
+            // stop the counter after reaching 11
+            if (offboard_setpoint_counter_ < 11) {
+                offboard_setpoint_counter_++;
+            }
+            break;
+
+        case State::LANDING:
+        case State::TAKEOFF:
             
             // offboard_control_mode needs to be paired with trajectory_setpoint
             publish_offboard_control_mode(true, false);
@@ -281,13 +311,10 @@ void StarlingOffboard::timer_callback(){
             if (takeoff) {
                 publish_trajectory_setpoint_vel(stop_vel);
                 state_ = State::MISSION;
+                std::cout << "State: " << state_ << std::endl;
                 RCLCPP_INFO(this->get_logger(), "Takeoff complete -- reached setpoint within TOL");
             }
 
-            // stop the counter after reaching 11
-            if (offboard_setpoint_counter_ < 11) {
-                offboard_setpoint_counter_++;
-            }
             break;
 
         // GNN, Square, etc..
@@ -297,7 +324,7 @@ void StarlingOffboard::timer_callback(){
             // If the message rate drops bellow 2Hz, the drone exits offboard control mode
             publish_offboard_control_mode(false, true);
             
-            rclcpp::Duration duration = this->get_clock()->now() - time_last_vel_update;
+            rclcpp::Duration duration = clock_->now() - time_last_vel_update;
             if (duration.seconds() > 0.5) {
                 RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
                 publish_trajectory_setpoint_vel(stop_vel);
@@ -305,8 +332,8 @@ void StarlingOffboard::timer_callback(){
             else {
                 publish_trajectory_setpoint_vel(vel_ned);
             }
-
             break;
+
     }
 }
 
@@ -328,8 +355,8 @@ Eigen::Vector3f StarlingOffboard::compute_translation(const double ref_lat, cons
 /**
  * @brief Transform the position from mission frame to NED
  */
-Eigen::Vector4f StarlingOffboard::transform_mission_to_ned(const Eigen::Vector4f &vec_mission){
-    Eigen::Vector4f vec_ned = T_miss_ned * vec_mission;
+Eigen::Vector4f StarlingOffboard::tform(const Eigen::Vector4f &vec_mission, const Eigen::Matrix<float, 4, 4> &Tf){
+    Eigen::Vector4f vec_ned = Tf * vec_mission;
     return vec_ned;
 }
 
@@ -357,11 +384,6 @@ bool StarlingOffboard::has_reached_pos(const Eigen::Vector4f& target_pos)
 	const float err_y = std::abs(pos_msg_.y - target_pos[1]);
 	const float err_z = std::abs(pos_msg_.z - target_pos[2]);
 
-	std::ostringstream oss;
-	oss << "ErrX = " << err_x << ", -- ErrY = " << err_y << ", -- ErrZ = " << err_z;
-	std::string message = oss.str();
-
-	RCLCPP_INFO(this->get_logger(), message.c_str());
 	return err_x < POS_TOL_ && err_y < POS_TOL_ && err_z < POS_TOL_;
 }
 /**
@@ -442,16 +464,16 @@ void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::Shared
     const float err_z = (pos_msg_.z - takeoff_z);
 
     // Clamp the GNN velocity to [-1, 1], with mission scale factor
+    // NOTE Flipping x and y to match the mission frame
     const Eigen::Vector4f vel_mission (
-                               (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -3.0, 3.0), 
                                (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -3.0, 3.0),
+                               (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -3.0, 3.0), 
                                -kP * err_z,
-                               0.0);
+                               1.0);
     
     // Transform the velocity from the mission frame to NED
-    vel_ned = transform_mission_to_ned(vel_mission);
-
-    time_last_vel_update = this->get_clock()->now();
+    vel_ned = tform(vel_mission, T_miss_ned);
+    time_last_vel_update = clock_->now();
 }
 
 /**
@@ -459,11 +481,21 @@ void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::Shared
  */
 void StarlingOffboard::publish_pose(const px4_msgs::msg::VehicleLocalPosition::SharedPtr vehicle_local_position)
 {
+
+    const Eigen::Vector4f vehicle_local_position_vec (vehicle_local_position->x, 
+                                                      vehicle_local_position->y, 
+                                                      vehicle_local_position->z, 
+                                                      1.0);
+
+    const Eigen::Vector4f vehicle_mission_position = tform(vehicle_local_position_vec, T_ned_miss);
+
     geometry_msgs::msg::PoseStamped gnn_pose;
     gnn_pose.header.stamp = this->get_clock()->now();
-    gnn_pose.pose.position.x = vehicle_local_position->x;
-    gnn_pose.pose.position.y = vehicle_local_position->y;
-    gnn_pose.pose.position.z = vehicle_local_position->z;
+
+    // NOTE Flpping x and y to match the mission frame
+    gnn_pose.pose.position.x = vehicle_mission_position[1];
+    gnn_pose.pose.position.y = vehicle_mission_position[0];
+    gnn_pose.pose.position.z = vehicle_mission_position[2];
     pose_publisher_->publish(gnn_pose);
 }
 
@@ -496,7 +528,7 @@ void StarlingOffboard::publish_vehicle_command(uint16_t command, float param1, f
 
 int main(int argc, char *argv[])
 {
-    std::cout << " Eigen version : " << EIGEN_MAJOR_VERSION << " . " << EIGEN_MINOR_VERSION << std::endl ;
+    std::cout << " Eigen version : " << EIGEN_MAJOR_VERSION << "." << EIGEN_MINOR_VERSION << std::endl ;
  	std::cout << "Starting Starling offboard node..." << std::endl;
 	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 	rclcpp::init(argc, argv);
