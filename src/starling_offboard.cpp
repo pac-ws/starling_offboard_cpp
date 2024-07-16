@@ -100,12 +100,12 @@ public:
 		offboard_setpoint_counter_ = 0;
         
         // Transformation matrix from Mission to NED
-        inv_rotation = Eigen::AngleAxisf(-HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
-        T_miss_ned.block<3,3>(0,0) = inv_rotation;
+        rotation = Eigen::AngleAxisf(HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        T_miss_ned.block<3,3>(0,0) = rotation;
 
         // Transformation matrix from NED to Mission
-        rotation = Eigen::AngleAxisf(HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
-        T_ned_miss.block<3,3>(0,0) = rotation;
+        inv_rotation = Eigen::AngleAxisf(-HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        T_ned_miss.block<3,3>(0,0) = inv_rotation;
 
         takeoff_pos << 0.0, 0.0, takeoff_z, 0.0;
 
@@ -246,13 +246,14 @@ void StarlingOffboard::timer_callback(){
             translation = compute_translation(LAT_HOME, LON_HOME, ALT_HOME, global_pos_msg_.lat, global_pos_msg_.lon, global_pos_msg_.alt);
             inv_translation = -translation;
 
-            std::cout << "Translation: " << translation << std::endl;
+            std::cout << "Translation: " << inv_translation << std::endl;
             
             // Don't need translation for velocity
             //T_miss_ned.block<3,1>(0,3) = inv_translation;
             
             // Need translation for position
-            T_ned_miss.block<3,1>(0,3) = translation;
+            T_ned_miss.block<3,1>(0,3) = inv_translation;
+            std::cout << T_ned_miss << std::endl;
 
             // TODO 
             /*
