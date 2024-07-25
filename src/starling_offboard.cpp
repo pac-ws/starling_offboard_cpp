@@ -104,15 +104,21 @@ public:
 		offboard_setpoint_counter_ = 0;
         
         // Transformation matrix from Mission to NED
-        rotation = Eigen::AngleAxisf(HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
-        T_miss_ned.block<3,3>(0,0) = rotation;
+        // TODO revert x,y flip
+        R_z = Eigen::AngleAxisf(HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        R_x = Eigen::AngleAxisf(M_PI/2., Eigen::Vector3f::UnitX()).toRotationMatrix();
+        R = R_z * R_x;
+        T_miss_ned.block<3,3>(0,0) = R_z;
 
         // Transformation matrix from NED to Mission
-        inv_rotation = Eigen::AngleAxisf(-HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
-        T_ned_miss.block<3,3>(0,0) = inv_rotation;
+        // TODO revert x,y flip
+        R_z_inv = Eigen::AngleAxisf(-HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        R_x_inv = Eigen::AngleAxisf(-M_PI/2., Eigen::Vector3f::UnitX()).toRotationMatrix();
+        R_inv = R_z_inv * R_x_inv;
+        T_ned_miss.block<3,3>(0,0) = R_z_inv;
 
         takeoff_pos << 1.0, 1.0, takeoff_z, 1.0;
-	takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
+	    takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
 
         // Used to stop the drone when it reaches the waypoint
         stop_vel << 0.0, 0.0, 0.0, 0.0;
@@ -213,8 +219,12 @@ private:
 
     Eigen::Vector3f translation;
     Eigen::Vector3f inv_translation;
-    Eigen::Matrix3f rotation;
-    Eigen::Matrix3f inv_rotation;
+    Eigen::Matrix3f R;
+    Eigen::Matrix3f R_inv;
+    Eigen::Matrix3f R_z;
+    Eigen::Matrix3f R_z_inv;
+    Eigen::Matrix3f R_x;
+    Eigen::Matrix3f R_x_inv;
     Eigen::Matrix<float, 4, 4> T_miss_ned = Eigen::Matrix4f::Identity();
     Eigen::Matrix<float, 4, 4> T_ned_miss = Eigen::Matrix4f::Identity();
 
