@@ -22,9 +22,13 @@
 #include <Eigen/Geometry>
 
 // Origins and offsets
-#define LAT_HOME 39.941349055103075
-#define LON_HOME -75.19878530679716
-#define ALT_HOME 11.745387077331543
+//#define LAT_HOME 39.941349055103075
+//#define LON_HOME -75.19878530679716
+//#define ALT_HOME 11.745387077331543
+#define LAT_HOME 39.94135745505621
+#define LON_HOME -75.1987866666106
+#define ALT_HOME 9.761974334716797
+
 #define HEADING_NED_TO_FRD 2.725
 
 #define _USE_MATH_DEFINES
@@ -107,21 +111,22 @@ public:
         inv_rotation = Eigen::AngleAxisf(-HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
         T_ned_miss.block<3,3>(0,0) = inv_rotation;
 
-        takeoff_pos << 0.0, 0.0, takeoff_z, 0.0;
+        takeoff_pos << 1.0, 1.0, takeoff_z, 1.0;
+	takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
 
         // Used to stop the drone when it reaches the waypoint
-        stop_vel << 0.0, 0.0, 0.0, 1.0;
+        stop_vel << 0.0, 0.0, 0.0, 0.0;
 
         // Holds the current velocity from the mission to be sent to the px4
-        vel_ned << 0.0, 0.0, 0.0, 1.0;
+        vel_ned << 0.0, 0.0, 0.0, 0.0;
 
         // QoS
 		rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
 		auto qos = rclcpp::QoS(rclcpp::QoSInitialization(qos_profile.history, 5), qos_profile);
         
         // Pubs and Subs
-		offboard_control_mode_publisher_ = this->create_publisher<OffboardControlMode>("fmu/in/offboard_control_mode", qos);
-		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>("fmu/in/vehicle_command", qos);
+		offboard_control_mode_publisher_ = this->create_publisher<OffboardControlMode>("fmu/in/offboard_control_mode", 5);
+		vehicle_command_publisher_ = this->create_publisher<VehicleCommand>("fmu/in/vehicle_command", 5);
         drone_status_publisher_ = this->create_publisher<std_msgs::msg::String>("drone_status", qos);
 
         status_sub_ = this->create_subscription<px4_msgs::msg::VehicleStatus>("fmu/out/vehicle_status", qos, [this](const px4_msgs::msg::VehicleStatus::UniquePtr msg){
@@ -134,6 +139,7 @@ public:
 
         global_pos_subscription_ = this->create_subscription<px4_msgs::msg::VehicleGlobalPosition>("fmu/out/vehicle_global_position", qos, [this](const px4_msgs::msg::VehicleGlobalPosition::UniquePtr msg){
             global_pos_msg_ = *msg;
+	    gps_received = true;
         });
 
         takeoff_subscription_ = this->create_subscription<std_msgs::msg::Bool>("takeoff", qos, [this](const std_msgs::msg::Bool::UniquePtr msg){
@@ -142,7 +148,7 @@ public:
 
         // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
         gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("cmd_vel", qos, std::bind(&StarlingOffboard::update_vel, this, std::placeholders::_1));
-        trajectory_setpoint_publisher_ = this->create_publisher<px4_msgs::msg::TrajectorySetpoint>("fmu/in/trajectory_setpoint", qos);
+        trajectory_setpoint_publisher_ = this->create_publisher<px4_msgs::msg::TrajectorySetpoint>("fmu/in/trajectory_setpoint", 5);
 
         // Position Translation (VehicleLocalPosition [PX4] to PoseStamped [GNN])
         vehicle_local_position_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>("fmu/out/vehicle_local_position", qos, std::bind(&StarlingOffboard::publish_pose, this, std::placeholders::_1));
@@ -184,6 +190,8 @@ private:
     uint8_t arming_state_;
     bool takeoff_cmd_received = false;
 
+    bool gps_received = false;
+
     float takeoff_z;
 	bool takeoff = false;
 	bool waypt_reached = false;
@@ -193,6 +201,7 @@ private:
     Eigen::Vector4f vel_ned;
     Eigen::Vector4f stop_vel;
     Eigen::Vector4f takeoff_pos;
+    Eigen::Vector4f takeoff_pos_ned;
     Eigen::Matrix<float, 4, 4> waypts;
 	uint8_t way_pt_idx;
 	const float POS_TOL_ = 0.5; // waypoint position tolerance in meters
@@ -242,30 +251,39 @@ void StarlingOffboard::timer_callback(){
     switch (state_) {
 
         case State::IDLE:
-            // Compute the translation from the home position to the current (start up position)
-            translation = compute_translation(LAT_HOME, LON_HOME, ALT_HOME, global_pos_msg_.lat, global_pos_msg_.lon, global_pos_msg_.alt);
-            inv_translation = -translation;
+	    if (gps_received){
+		    // Compute the translation from the home position to the current (start up position)
+		    std::cout << "lat: " << global_pos_msg_.lat << std::endl;
+		    std::cout << "lon: " << global_pos_msg_.lon << std::endl;
+		    std::cout << "alt: " << global_pos_msg_.alt << std::endl;
 
-            std::cout << "Translation: " << inv_translation << std::endl;
-            
-            // Don't need translation for velocity
-            //T_miss_ned.block<3,1>(0,3) = inv_translation;
-            
-            // Need translation for position
-            T_ned_miss.block<3,1>(0,3) = inv_translation;
-            std::cout << T_ned_miss << std::endl;
+		    translation = compute_translation(LAT_HOME, LON_HOME, ALT_HOME, global_pos_msg_.lat, global_pos_msg_.lon, global_pos_msg_.alt);
+		    inv_translation = -translation;
 
-            // TODO 
-            /*
-            if (takeoff_cmd_received) {
-                state_ = State::TAKEOFF;
-                takeoff_cmd_received = false;
-            }
-            */
+		    std::cout << "Translation: " << inv_translation << std::endl;
 
-            // TODO
-            state_ = State::ARMING;
-            std::cout << "State: " << state_ << std::endl;
+		    std::cout << "Takeoff pos (miss): " << takeoff_pos << std::endl;
+		    std::cout << "Takeoff pos (ned): " << takeoff_pos_ned << std::endl;
+		    
+		    // Don't need translation for velocity
+		    T_miss_ned.block<3,1>(0,3) = translation;
+		    
+		    // Need translation for position
+		    T_ned_miss.block<3,1>(0,3) = inv_translation;
+		    std::cout << T_ned_miss << std::endl;
+
+		    // TODO 
+		    /*
+		    if (takeoff_cmd_received) {
+			state_ = State::TAKEOFF;
+			takeoff_cmd_received = false;
+		    }
+		    */
+
+		    // TODO
+		    state_ = State::ARMING;
+		    std::cout << "State: " << state_ << std::endl;
+	    }
             break;
 
         case State::ARMING:
@@ -286,13 +304,12 @@ void StarlingOffboard::timer_callback(){
                     // Retry
                     offboard_setpoint_counter_ = 0;
                 }
-                    
             }
 
             // Send 10 setpoints before attempting to arm
             // offboard_control_mode needs to be paired with trajectory_setpoint
             publish_offboard_control_mode(true, false);
-            publish_trajectory_setpoint_pos(takeoff_pos);
+            publish_trajectory_setpoint_pos(takeoff_pos_ned);
             
             // stop the counter after reaching 11
             if (offboard_setpoint_counter_ < 11) {
@@ -302,19 +319,22 @@ void StarlingOffboard::timer_callback(){
 
         case State::LANDING:
         case State::TAKEOFF:
-            
-            // offboard_control_mode needs to be paired with trajectory_setpoint
-            publish_offboard_control_mode(true, false);
-            publish_trajectory_setpoint_pos(takeoff_pos);
 
             // error calculation
-            takeoff = this->has_reached_pos(takeoff_pos);
+            takeoff = this->has_reached_pos(takeoff_pos_ned);
+            
             if (takeoff) {
+            	publish_offboard_control_mode(true, false);
                 publish_trajectory_setpoint_vel(stop_vel);
                 state_ = State::MISSION;
                 std::cout << "State: " << state_ << std::endl;
                 RCLCPP_INFO(this->get_logger(), "Takeoff complete -- reached setpoint within TOL");
             }
+	    else {
+		    // offboard_control_mode needs to be paired with trajectory_setpoint
+		    publish_offboard_control_mode(true, false);
+		    publish_trajectory_setpoint_pos(takeoff_pos_ned);
+	    }
 
             break;
 
@@ -325,16 +345,18 @@ void StarlingOffboard::timer_callback(){
             // If the message rate drops bellow 2Hz, the drone exits offboard control mode
             publish_offboard_control_mode(false, true);
             
-            rclcpp::Duration duration = clock_->now() - time_last_vel_update;
+	    // TODO time source difference bug
+            publish_trajectory_setpoint_vel(vel_ned);
+
+            /*rclcpp::Duration duration = clock_->now() - time_last_vel_update;
             if (duration.seconds() > 0.5) {
                 RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
                 publish_trajectory_setpoint_vel(stop_vel);
             }
             else {
                 publish_trajectory_setpoint_vel(vel_ned);
-            }
+            }*/
             break;
-
     }
 }
 
