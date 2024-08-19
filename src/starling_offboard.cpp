@@ -25,9 +25,18 @@
 //#define LAT_HOME 39.941349055103075
 //#define LON_HOME -75.19878530679716
 //#define ALT_HOME 11.745387077331543
-#define LAT_HOME 39.94135745505621
-#define LON_HOME -75.1987866666106
-#define ALT_HOME 9.761974334716797
+//#define LAT_HOME 39.94135745505621
+//#define LON_HOME -75.1987866666106
+//#define ALT_HOME 9.761974334716797
+//#define LAT_HOME 39.941333347782304
+//#define LON_HOME -75.19877739737733
+//#define ALT_HOME 14.747905731201172
+//#define LAT_HOME 39.94139322642382
+//#define LON_HOME -75.19879107747902
+//#define ALT_HOME 8.783720970153809
+#define LON_HOME 39.94134995441384
+#define LAT_HOME -75.19878448286228
+#define ALT_HOME 7.699385643005371
 
 #define HEADING_NED_TO_FRD 2.725
 
@@ -498,10 +507,17 @@ void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::Shared
 
     // Clamp the GNN velocity to [-1, 1], with mission scale factor
     // NOTE Flipping x and y to match the mission frame
+    // TODO this is bugged? avoid for square_vel test
+   // const Eigen::Vector4f vel_mission (
+   //                            (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -3.0, 3.0),
+   //                            (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -3.0, 3.0), 
+   //                            -kP * err_z,
+   //                            1.0);
+
     const Eigen::Vector4f vel_mission (
                                (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -3.0, 3.0),
                                (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -3.0, 3.0), 
-                               -kP * err_z,
+                               (float) clamp(scale * gnn_cmd_vel->twist.linear.z, -3.0, 3.0), 
                                1.0);
     
     // Transform the velocity from the mission frame to NED
