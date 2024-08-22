@@ -17,6 +17,8 @@ endif()
 
 set(CMAKE_SKIP_CHECKING_BUILD_SYSTEM TRUE)
 
+set(CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib" ${CMAKE_MODULE_PATH})
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -24,8 +26,9 @@ find_package(example_interfaces REQUIRED)
 find_package(px4_msgs REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
-#find_package(GeographicLib REQUIRED)
+find_package(GeographicLib REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(rosbag2_cpp REQUIRED)
 find_package(message_filters REQUIRED)
@@ -39,7 +42,9 @@ ament_target_dependencies(starling_offboard_cpp
     px4_msgs 
     Eigen3 
     eigen3_cmake_module 
+    GeographicLib
     geometry_msgs 
+    nav_msgs
     sensor_msgs 
     rosbag2_cpp
 )

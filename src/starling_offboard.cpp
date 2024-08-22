@@ -1,5 +1,6 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <px4_msgs/msg/offboard_control_mode.hpp>
@@ -20,6 +21,7 @@
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+#include <GeographicLib/Geodesic.hpp>
 
 // Origins and offsets
 #define LAT_HOME 39.94133355633278
@@ -155,7 +157,10 @@ public:
 
         // Position Translation (VehicleLocalPosition [PX4] to PoseStamped [GNN])
         vehicle_local_position_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>("fmu/out/vehicle_local_position", qos, std::bind(&StarlingOffboard::publish_pose, this, std::placeholders::_1));
-        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("pose", qos);
+
+        // TODO Revert before real flight
+        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("pose_SYNTH", qos);
+        path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("path", qos);
 
         // 10Hz Timer
         timer_ = this->create_wall_timer(100ms, std::bind(&StarlingOffboard::timer_callback, this));
@@ -179,6 +184,7 @@ private:
     rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr trajectory_setpoint_publisher_;
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr vehicle_local_position_subscription_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_publisher_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_publisher_;
 
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr drone_status_publisher_;
 	rclcpp::Publisher<OffboardControlMode>::SharedPtr offboard_control_mode_publisher_;
@@ -190,6 +196,10 @@ private:
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr takeoff_subscription_;
 	px4_msgs::msg::VehicleLocalPosition pos_msg_;
     px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
+    
+    // Pose history
+    nav_msgs::msg::Path path;
+
     uint8_t arming_state_;
     bool takeoff_cmd_received = false;
 
@@ -258,43 +268,57 @@ void StarlingOffboard::timer_callback(){
     switch (state_) {
 
         case State::IDLE:
-	    if (gps_received){
-		    // Compute the translation from the home position to the current (start up position)
-		    std::cout << "lat: " << global_pos_msg_.lat << std::endl;
-		    std::cout << "lon: " << global_pos_msg_.lon << std::endl;
-		    std::cout << "alt: " << global_pos_msg_.alt << std::endl;
-		    std::cout << "z_ref :" << pos_msg_.z << std::endl;
+            if (gps_received){
+                // Compute the translation from the home position to the current (start up position)
+                std::cout << "lat: " << global_pos_msg_.lat << std::endl;
+                std::cout << "lon: " << global_pos_msg_.lon << std::endl;
+                std::cout << "alt: " << global_pos_msg_.alt << std::endl;
+                std::cout << "z_ref :" << pos_msg_.z << std::endl;
 
-		    // Altitude reference is based on vehicle_local_position.z not the GPS ALT. GPS altitude is unstable.
-		    translation = compute_translation(LAT_HOME, LON_HOME, 0.0, global_pos_msg_.lat, global_pos_msg_.lon, pos_msg_.z);
-		    inv_translation = -translation;
+                // Altitude reference is based on vehicle_local_position.z not the GPS ALT. GPS altitude is unstable.
+                //translation = compute_translation(LAT_HOME, LON_HOME, 0.0, global_pos_msg_.lat, global_pos_msg_.lon, pos_msg_.z);
 
-		    std::cout << "Translation: " << inv_translation << std::endl;
+                // Compute the translation from the home position to the current (start up position)
+                double distance;
+                double azimuth_origin_to_target;
+                double azimuth_target_to_origin;
 
-		    // Don't need translation for velocity
-		    T_miss_ned.block<3,1>(0,3) = translation;
-		    
-		    // Need translation for position
-		    T_ned_miss.block<3,1>(0,3) = inv_translation;
-		    std::cout << T_ned_miss << std::endl;
+                const GeographicLib::Geodesic geod = GeographicLib::Geodesic::WGS84();
+                geod.Inverse(LAT_HOME, LON_HOME, global_pos_msg_.lat, global_pos_msg_.lon, distance, azimuth_origin_to_target, azimuth_target_to_origin);
 
-	       	    takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
+                std::cout << "Distance: " << distance << std::endl;
+                std::cout << "Azimuth origin to target: " << azimuth_origin_to_target << std::endl;
+                std::cout << "Azimuth target to origin: " << azimuth_target_to_origin << std::endl;
+        
+                double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
+                double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
+                double z = pos_msg_.z;
 
-		    std::cout << "Takeoff pos (miss): " << takeoff_pos << std::endl;
-		    std::cout << "Takeoff pos (ned): " << takeoff_pos_ned << std::endl;
+                translation = Eigen::Vector3f(x, y, z);
+                inv_translation = -translation;
 
-		    // TODO 
-		    /*
-		    if (takeoff_cmd_received) {
-			state_ = State::TAKEOFF;
-			takeoff_cmd_received = false;
-		    }
-		    */
+                std::cout << "Inverse Translation: " << inv_translation << std::endl;
 
-		    // TODO
-		    state_ = State::ARMING;
-		    std::cout << "State: " << state_ << std::endl;
-	    }
+                T_miss_ned.block<3,1>(0,3) = translation;
+                T_ned_miss.block<3,1>(0,3) = inv_translation;
+                std::cout << T_ned_miss << std::endl;
+
+                takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
+                std::cout << "Takeoff pos (miss): " << takeoff_pos << std::endl;
+                std::cout << "Takeoff pos (ned): " << takeoff_pos_ned << std::endl;
+
+                // TODO 
+                /*
+                if (takeoff_cmd_received) {
+                state_ = State::TAKEOFF;
+                takeoff_cmd_received = false;
+                }
+                */
+
+                // TODO
+                state_ = State::ARMING;
+                std::cout << "State: " << state_ << std::endl;
+            }
             break;
 
         case State::ARMING:
@@ -523,7 +547,7 @@ void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::Shared
 }
 
 /**
- * @brief Publish the pose (PoseStamped) to the GNN
+ * @brief Publish the pose (PoseStamped) to the GNN. Publishing the path as well for visualization
  */
 void StarlingOffboard::publish_pose(const px4_msgs::msg::VehicleLocalPosition::SharedPtr vehicle_local_position)
 {
@@ -535,15 +559,25 @@ void StarlingOffboard::publish_pose(const px4_msgs::msg::VehicleLocalPosition::S
 
     const Eigen::Vector4f vehicle_mission_position = tform(vehicle_local_position_vec, T_ned_miss);
 
+    // Publish the current pose
     geometry_msgs::msg::PoseStamped gnn_pose;
     gnn_pose.header.stamp = this->get_clock()->now();
+    gnn_pose.header.frame_id = "map";
 
     // NOTE Flpping x and y to match the mission frame
     gnn_pose.pose.position.x = vehicle_mission_position[1];
     gnn_pose.pose.position.y = vehicle_mission_position[0];
     gnn_pose.pose.position.z = vehicle_mission_position[2];
     pose_publisher_->publish(gnn_pose);
+
+    // Publish the path
+    path.header.stamp = this->get_clock()->now();
+    path.header.frame_id = "map";
+
+    path.poses.push_back(gnn_pose);
+    path_publisher_->publish(path);
 }
+
 
 /**
  * @brief Publish vehicle commands
