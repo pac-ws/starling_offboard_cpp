@@ -22,23 +22,12 @@
 #include <Eigen/Geometry>
 
 // Origins and offsets
-//#define LAT_HOME 39.941349055103075
-//#define LON_HOME -75.19878530679716
-//#define ALT_HOME 11.745387077331543
-//#define LAT_HOME 39.94135745505621
-//#define LON_HOME -75.1987866666106
-//#define ALT_HOME 9.761974334716797
-//#define LAT_HOME 39.941333347782304
-//#define LON_HOME -75.19877739737733
-//#define ALT_HOME 14.747905731201172
-//#define LAT_HOME 39.94139322642382
-//#define LON_HOME -75.19879107747902
-//#define ALT_HOME 8.783720970153809
-#define LON_HOME 39.94134995441384
-#define LAT_HOME -75.19878448286228
+#define LAT_HOME 39.94133355633278
+#define LON_HOME -75.19877565334785
 #define ALT_HOME 7.699385643005371
+#define Z_REF -0.0377647
 
-#define HEADING_NED_TO_FRD 2.725
+#define HEADING_NED_TO_FRD 2.975553274154663
 
 #define _USE_MATH_DEFINES
 #include <math.h>
@@ -127,7 +116,6 @@ public:
         T_ned_miss.block<3,3>(0,0) = R_z_inv;
 
         takeoff_pos << 1.0, 1.0, takeoff_z, 1.0;
-	    takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
 
         // Used to stop the drone when it reaches the waypoint
         stop_vel << 0.0, 0.0, 0.0, 0.0;
@@ -275,21 +263,25 @@ void StarlingOffboard::timer_callback(){
 		    std::cout << "lat: " << global_pos_msg_.lat << std::endl;
 		    std::cout << "lon: " << global_pos_msg_.lon << std::endl;
 		    std::cout << "alt: " << global_pos_msg_.alt << std::endl;
+		    std::cout << "z_ref :" << pos_msg_.z << std::endl;
 
-		    translation = compute_translation(LAT_HOME, LON_HOME, ALT_HOME, global_pos_msg_.lat, global_pos_msg_.lon, global_pos_msg_.alt);
+		    // Altitude reference is based on vehicle_local_position.z not the GPS ALT. GPS altitude is unstable.
+		    translation = compute_translation(LAT_HOME, LON_HOME, 0.0, global_pos_msg_.lat, global_pos_msg_.lon, pos_msg_.z);
 		    inv_translation = -translation;
 
 		    std::cout << "Translation: " << inv_translation << std::endl;
 
-		    std::cout << "Takeoff pos (miss): " << takeoff_pos << std::endl;
-		    std::cout << "Takeoff pos (ned): " << takeoff_pos_ned << std::endl;
-		    
 		    // Don't need translation for velocity
 		    T_miss_ned.block<3,1>(0,3) = translation;
 		    
 		    // Need translation for position
 		    T_ned_miss.block<3,1>(0,3) = inv_translation;
 		    std::cout << T_ned_miss << std::endl;
+
+	       	    takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
+
+		    std::cout << "Takeoff pos (miss): " << takeoff_pos << std::endl;
+		    std::cout << "Takeoff pos (ned): " << takeoff_pos_ned << std::endl;
 
 		    // TODO 
 		    /*
@@ -367,14 +359,14 @@ void StarlingOffboard::timer_callback(){
 	    // TODO time source difference bug
             publish_trajectory_setpoint_vel(vel_ned);
 
-            /*rclcpp::Duration duration = clock_->now() - time_last_vel_update;
-            if (duration.seconds() > 0.5) {
-                RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
-                publish_trajectory_setpoint_vel(stop_vel);
-            }
-            else {
-                publish_trajectory_setpoint_vel(vel_ned);
-            }*/
+            //rclcpp::Duration duration = clock_->now() - time_last_vel_update;
+            //if (duration.seconds() > 0.5) {
+            //    RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
+            //    publish_trajectory_setpoint_vel(stop_vel);
+            //}
+            //else {
+            //    publish_trajectory_setpoint_vel(vel_ned);
+            //}
             break;
     }
 }
@@ -391,6 +383,10 @@ Eigen::Vector3f StarlingOffboard::compute_translation(const double ref_lat, cons
     const double x = R * d_lat;
     const double y = R * d_lon * cos(lat * M_PI / 180.0);
     const double z = d_alt;
+
+    std::cout << "d_lat: " << d_lat << "lat: " << lat << "ref_lat: " << ref_lat << std::endl;
+    std::cout << "d_lon: " << d_lon << "lon: " << lon << "ref_lon: " << ref_lon << std::endl;
+
     return Eigen::Vector3f(x, y, z);
 }
 
@@ -502,7 +498,7 @@ void StarlingOffboard::publish_trajectory_setpoint_pos(const Eigen::Vector4f& ta
 void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel)
 {
     // Proportional controller to maintain altitude
-    const float kP = -1.0;
+    const float kP = 1.0;
     const float err_z = (pos_msg_.z - takeoff_z);
 
     // Clamp the GNN velocity to [-1, 1], with mission scale factor
@@ -514,10 +510,11 @@ void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::Shared
    //                            -kP * err_z,
    //                            1.0);
 
+
     const Eigen::Vector4f vel_mission (
-                               (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -3.0, 3.0),
-                               (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -3.0, 3.0), 
-                               (float) clamp(scale * gnn_cmd_vel->twist.linear.z, -3.0, 3.0), 
+                               (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -2.0, 2.0),
+                               (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -2.0, 2.0), 
+                               (float) clamp((double)(-kP * err_z), -2.0, 2.0), 
                                1.0);
     
     // Transform the velocity from the mission frame to NED
