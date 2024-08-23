@@ -17,7 +17,19 @@ endif()
 
 set(CMAKE_SKIP_CHECKING_BUILD_SYSTEM TRUE)
 
-set(CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib" ${CMAKE_MODULE_PATH})
+#set(CMAKE_MODULE_PATH "/usr/share/cmake/geographiclib" ${CMAKE_MODULE_PATH})
+#set(CMAKE_MODULE_PATH "/usr/local/cmake/GeographicLib" ${CMAKE_MODULE_PATH})
+
+#list(APPEND CMAKE_MODULE_PATH "/workspace/GeographicLib-2.4/cmake")
+#
+## Set the include directory for GeographicLib
+#set(GeographicLib_INCLUDE_DIRS "/usr/include/GeographicLib")
+#
+## Set the library directory for GeographicLib
+#set(GeographicLib_LIBRARY_DIRS "/usr/lib/aarch64-linux-gnu")
+#
+## Specify the actual library file to link against
+#set(GeographicLib_LIBRARIES "Geographic")
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
@@ -34,6 +46,10 @@ find_package(rosbag2_cpp REQUIRED)
 find_package(message_filters REQUIRED)
 
 include_directories(${EIGEN3_INCLUDE_DIR})
+
+#target_include_directories(starling_offboard_cpp PRIVATE ${GeographicLib_INCLUDE_DIRS})
+#target_link_directories(starling_offboard_cpp PRIVATE ${GeographicLib_LIBRARY_DIRS})
+#target_link_libraries(starling_offboard_cpp PRIVATE ${GeographicLib_LIBRARIES})
 
 # executables
 add_executable(starling_offboard_cpp src/starling_offboard.cpp)

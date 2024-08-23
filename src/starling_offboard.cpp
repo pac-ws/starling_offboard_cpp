@@ -24,12 +24,13 @@
 #include <GeographicLib/Geodesic.hpp>
 
 // Origins and offsets
-#define LAT_HOME 39.94133355633278
-#define LON_HOME -75.19877565334785
+#define LAT_HOME 39.941135138572534
+#define LON_HOME -75.1986412747915
 #define ALT_HOME 7.699385643005371
 #define Z_REF -0.0377647
 
-#define HEADING_NED_TO_FRD 2.975553274154663
+//#define HEADING_NED_TO_FRD 2.919225215
+#define HEADING_NED_TO_FRD  -0.570442259311676
 
 #define _USE_MATH_DEFINES
 #include <math.h>
@@ -44,7 +45,7 @@ using namespace px4_msgs::msg;
 
 enum class State {
 	IDLE,
-    ARMING,
+	ARMING,
 	TAKEOFF,
 	MISSION,
 	LANDING
@@ -159,7 +160,7 @@ public:
         vehicle_local_position_subscription_ = this->create_subscription<px4_msgs::msg::VehicleLocalPosition>("fmu/out/vehicle_local_position", qos, std::bind(&StarlingOffboard::publish_pose, this, std::placeholders::_1));
 
         // TODO Revert before real flight
-        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("pose_SYNTH", qos);
+        pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("pose", qos);
         path_publisher_ = this->create_publisher<nav_msgs::msg::Path>("path", qos);
 
         // 10Hz Timer
@@ -268,6 +269,8 @@ void StarlingOffboard::timer_callback(){
     switch (state_) {
 
         case State::IDLE:
+	    std::cout << "State: " << state_ << std::endl;
+
             if (gps_received){
                 // Compute the translation from the home position to the current (start up position)
                 std::cout << "lat: " << global_pos_msg_.lat << std::endl;
