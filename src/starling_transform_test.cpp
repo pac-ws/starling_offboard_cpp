@@ -25,13 +25,17 @@
 #include <GeographicLib/Geodesic.hpp>
 
 // Origins and offsets
-#define LAT_HOME 39.941135138572534
-#define LON_HOME -75.1986412747915
+#define LAT_HOME 39.942304702257374
+#define LON_HOME -75.19934070232055
 #define ALT_HOME 7.699385643005371
 #define Z_REF -0.0377647
 
-//#define HEADING_NED_TO_FRD 2.919225215
-#define HEADING_NED_TO_FRD  -0.570442259311676
+// Second position
+#define LAT_2 39.94229102414112
+#define LON_2 -75.19940896407824
+
+// Northgrass1
+#define HEADING_NED_TO_FRD  -2.1449203491210938
 
 #define _USE_MATH_DEFINES
 #include <math.h>
@@ -114,6 +118,24 @@ public:
 
         takeoff_pos << 1.0, 1.0, takeoff_z, 1.0;
 
+        add_translation_to_transforms(LAT_HOME, LON_HOME, LAT_HOME, LON_HOME);
+        takeoff_pos_ned0 = tform(takeoff_pos, T_miss_ned);
+
+        std::cout << "Takeoff position in mission frame: " << takeoff_pos.transpose() << std::endl;
+        std::cout << "Takeoff position in NED frame: " << takeoff_pos_ned0.transpose() << std::endl;
+
+        add_translation_to_transforms(LAT_HOME, LON_HOME, LAT_2, LON_2);
+        takeoff_pos_ned = tform(takeoff_pos, T_miss_ned);
+
+        takeoff_pos_check = tform(takeoff_pos_ned, T_ned_miss);
+
+
+        std::cout << "Takeoff position in mission frame: " << takeoff_pos.transpose() << std::endl;
+        std::cout << "Takeoff position in mission frame (check): " << takeoff_pos_check.transpose() << std::endl;
+        std::cout << "Takeoff position in NED frame: " << takeoff_pos_ned.transpose() << std::endl;
+
+        assert(takeoff_pos_check.isApprox(takeoff_pos, 0.01));
+
         // Used to stop the drone when it reaches the waypoint
         stop_vel << 0.0, 0.0, 0.0, 0.0;
 
@@ -139,7 +161,7 @@ public:
 
         global_pos_subscription_ = this->create_subscription<px4_msgs::msg::VehicleGlobalPosition>("fmu/out/vehicle_global_position", qos, [this](const px4_msgs::msg::VehicleGlobalPosition::UniquePtr msg){
             global_pos_msg_ = *msg;
-	        gps_received = true;
+	    gps_received = true;
         });
 
         takeoff_subscription_ = this->create_subscription<std_msgs::msg::Bool>("takeoff", qos, [this](const std_msgs::msg::Bool::UniquePtr msg){
@@ -210,6 +232,8 @@ private:
     Eigen::Vector4f stop_vel;
     Eigen::Vector4f takeoff_pos;
     Eigen::Vector4f takeoff_pos_ned;
+    Eigen::Vector4f takeoff_pos_ned0;
+    Eigen::Vector4f takeoff_pos_check;
     Eigen::Matrix<float, 4, 4> waypts;
 	uint8_t way_pt_idx;
 	const float POS_TOL_ = 0.5; // waypoint position tolerance in meters
@@ -245,157 +269,56 @@ private:
 	void set_home(const double lat, const double lon, const float alt);
     void update_vel(const geometry_msgs::msg::TwistStamped::SharedPtr gnn_cmd_vel);
     void publish_pose(const px4_msgs::msg::VehicleLocalPosition::SharedPtr vehicle_local_position);
+    void add_translation_to_transforms(const double lat1, const double lon1, const double lat2, const double lon2);
     void timer_callback();
 };
+
+void StarlingOffboard::add_translation_to_transforms(const double lat1, const double lon1, const double lat2, const double lon2){
+        // Compute the translation from the home position to the current (start up position)
+        double distance;
+        double azimuth_origin_to_target;
+        double azimuth_target_to_origin;
+
+        const GeographicLib::Geodesic geod = GeographicLib::Geodesic::WGS84();
+        geod.Inverse(lat1, lon1, lat2, lon2, distance, azimuth_origin_to_target, azimuth_target_to_origin);
+
+        std::cout << "Distance: " << distance << std::endl;
+        std::cout << "Azimuth origin to target: " << azimuth_origin_to_target << std::endl;
+        std::cout << "Azimuth target to origin: " << azimuth_target_to_origin << std::endl;
+
+        double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
+        double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
+        double z = 0;
+
+        double x_inv = distance * cos(azimuth_target_to_origin * M_PI / 180.0);
+        double y_inv = distance * sin(azimuth_target_to_origin * M_PI / 180.0);
+        double z_inv = 0;
+
+        translation = Eigen::Vector3f(x, y, z);
+        //translation = Eigen::Vector3f(0., 0., 0.);
+        //inv_translation = Eigen::Vector3f(x_inv, y_inv, z_inv);
+        inv_translation = -translation;
+
+        T_miss_ned.block<3,1>(0,3) = translation;
+        //T_ned_miss.block<3,1>(0,3) = inv_translation;
+
+        T_ned_miss = T_miss_ned.inverse();
+
+        std::cout << "Transform from mission to NED frame" << std::endl;
+        std::cout << T_miss_ned << std::endl;
+
+        std::cout << "Transform from NED to mission frame" << std::endl;
+        std::cout << T_ned_miss << std::endl;
+
+        assert (T_ned_miss.inverse().isApprox(T_miss_ned, 0.01));
+        assert ((T_miss_ned * T_ned_miss).isApprox(Eigen::Matrix4f::Identity(), 0.01));
+}
 
 /**
  * @brief Main Loop
  */
 void StarlingOffboard::timer_callback(){
 
-    //std::cout << "State: " << state_ << std::endl;
-    // Publish the current state
-    auto state_msg = std_msgs::msg::String();
-    state_msg.data = to_string(state_);
-    drone_status_publisher_->publish(state_msg);
-
-    // State Machine
-    switch (state_) {
-
-        case State::IDLE:
-	        std::cout << "State: " << state_ << std::endl;
-
-            if (gps_received){
-
-                // Compute the translation from the home position to the current (start up position)
-                std::cout << "lat: " << global_pos_msg_.lat << std::endl;
-                std::cout << "lon: " << global_pos_msg_.lon << std::endl;
-                std::cout << "alt: " << global_pos_msg_.alt << std::endl;
-                std::cout << "z_ref :" << pos_msg_.z << std::endl;
-
-                // Altitude reference is based on vehicle_local_position.z not the GPS ALT. GPS altitude is unstable.
-                //translation = compute_translation(LAT_HOME, LON_HOME, 0.0, global_pos_msg_.lat, global_pos_msg_.lon, pos_msg_.z);
-
-                // Compute the translation from the home position to the current (start up position)
-                double distance;
-                double azimuth_origin_to_target;
-                double azimuth_target_to_origin;
-
-                const GeographicLib::Geodesic geod = GeographicLib::Geodesic::WGS84();
-                geod.Inverse(LAT_HOME, LON_HOME, global_pos_msg_.lat, global_pos_msg_.lon, distance, azimuth_origin_to_target, azimuth_target_to_origin);
-
-                std::cout << "Distance: " << distance << std::endl;
-                std::cout << "Azimuth origin to target: " << azimuth_origin_to_target << std::endl;
-                std::cout << "Azimuth target to origin: " << azimuth_target_to_origin << std::endl;
-        
-                double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
-                double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
-                double z = pos_msg_.z;
-
-                translation = Eigen::Vector3f(x, y, z);
-
-                T_miss_ned.block<3,1>(0,3) = translation;
-                std::cout << "T_miss_ned: " << std::endl;
-                std::cout << T_miss_ned << std::endl;
-
-                T_ned_miss = T_miss_ned.inverse();
-                std::cout << "T_ned_miss: " << std::endl;
-                std::cout << T_ned_miss << std::endl;
-
-                assert ((T_miss_ned * T_ned_miss).isApprox(Eigen::Matrix4f::Identity(), 0.001));
-
-                takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
-                std::cout << "Takeoff pos (miss): " << takeoff_pos << std::endl;
-                std::cout << "Takeoff pos (ned): " << takeoff_pos_ned << std::endl;
-               
-                assert (tform(takeoff_pos_ned, T_ned_miss).isApprox(takeoff_pos, 0.001));
-
-                // TODO 
-                /*
-                if (takeoff_cmd_received) {
-                state_ = State::TAKEOFF;
-                takeoff_cmd_received = false;
-                }
-                */
-
-                // TODO
-                state_ = State::ARMING;
-                std::cout << "State: " << state_ << std::endl;
-            }
-            break;
-
-        case State::ARMING:
-            if (offboard_setpoint_counter_ == 10) {
-                // Change to Offboard mode after 10 setpoints
-                this->publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
-
-                // Arm the vehicle
-                this->arm();
-                
-                if (arming_state_ == 2) {
-                    RCLCPP_INFO(this->get_logger(), "Vehicle armed");
-                    state_ = State::TAKEOFF;
-                    std::cout << "State: " << state_ << std::endl;
-                }
-                else {
-                    RCLCPP_INFO(this->get_logger(), "Vehicle not armed");
-                    // Retry
-                    offboard_setpoint_counter_ = 0;
-                }
-            }
-
-            // Send 10 setpoints before attempting to arm
-            // offboard_control_mode needs to be paired with trajectory_setpoint
-            publish_offboard_control_mode(true, false);
-            publish_trajectory_setpoint_pos(takeoff_pos_ned);
-            
-            // stop the counter after reaching 11
-            if (offboard_setpoint_counter_ < 11) {
-                offboard_setpoint_counter_++;
-            }
-            break;
-
-        case State::LANDING:
-        case State::TAKEOFF:
-
-            // error calculation
-            takeoff = this->has_reached_pos(takeoff_pos_ned);
-            
-            if (takeoff) {
-            	publish_offboard_control_mode(true, false);
-                publish_trajectory_setpoint_vel(stop_vel);
-                state_ = State::MISSION;
-                std::cout << "State: " << state_ << std::endl;
-                RCLCPP_INFO(this->get_logger(), "Takeoff complete -- reached setpoint within TOL");
-            }
-	    else {
-		    // offboard_control_mode needs to be paired with trajectory_setpoint
-		    publish_offboard_control_mode(true, false);
-		    publish_trajectory_setpoint_pos(takeoff_pos_ned);
-	    }
-
-            break;
-
-        // GNN, Square, etc..
-        case State::MISSION:
-            
-            // offboard_control_mode needs to be paired with trajectory_setpoint
-            // If the message rate drops bellow 2Hz, the drone exits offboard control mode
-            publish_offboard_control_mode(false, true);
-            
-	    // TODO time source difference bug
-            publish_trajectory_setpoint_vel(vel_ned);
-
-            //rclcpp::Duration duration = clock_->now() - time_last_vel_update;
-            //if (duration.seconds() > 0.5) {
-            //    RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
-            //    publish_trajectory_setpoint_vel(stop_vel);
-            //}
-            //else {
-            //    publish_trajectory_setpoint_vel(vel_ned);
-            //}
-            break;
-    }
 }
 
 /**
@@ -426,21 +349,6 @@ Eigen::Vector4f StarlingOffboard::tform(const Eigen::Vector4f &vec_mission, cons
 }
 
 /**
- * @brief Compute the velocity to reach the target position
- */
-Eigen::Vector4f StarlingOffboard::compute_vel(const Eigen::Vector4f& target_pos){
-	const float kP = 1.0;
-
-	const float err_x = (pos_msg_.x - target_pos[0]);
-	const float err_y = (pos_msg_.y - target_pos[1]);
-	const float err_z = (pos_msg_.z - target_pos[2]);
-
-    Eigen::Vector4f vel;
-    vel << -kP * err_x, -kP * err_y, -kP * err_z, 0.0;
-	return vel;
-}
-
-/**
  * @brief Check if the drone has reached the target position within tolerance
  */
 bool StarlingOffboard::has_reached_pos(const Eigen::Vector4f& target_pos)
@@ -451,48 +359,7 @@ bool StarlingOffboard::has_reached_pos(const Eigen::Vector4f& target_pos)
 
 	return err_x < POS_TOL_ && err_y < POS_TOL_ && err_z < POS_TOL_;
 }
-/**
- * @brief Set the home position of the drone
- */
-void StarlingOffboard::set_home(const double lat, const double lon, const float alt)
-{
-	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_DO_SET_HOME, 0.0, 0.0, lat, lon, alt);
-	RCLCPP_INFO(this->get_logger(), "Home position set");
-}
 
-/**
- * @brief Send a command to Arm the vehicle
- */
-void StarlingOffboard::arm()
-{
-	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0, 0.0, 0.0, 0.0, 0.0);
-	RCLCPP_INFO(this->get_logger(), "Arm command send");
-}
-
-/**
- * @brief Send a command to Disarm the vehicle
- */
-void StarlingOffboard::disarm()
-{
-	publish_vehicle_command(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0, 0.0, 0.0, 0.0, 0.0);
-	RCLCPP_INFO(this->get_logger(), "Disarm command send");
-}
-
-/**
- * @brief Publish the offboard control mode.
- *        For this example, only position and altitude controls are active.
- */
-void StarlingOffboard::publish_offboard_control_mode(const bool is_pos, const bool is_vel)
-{
-	OffboardControlMode msg{};
-	msg.position = is_pos;
-	msg.velocity = is_vel;
-	msg.acceleration = false;
-	msg.attitude = false;
-	msg.body_rate = false;
-	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-	offboard_control_mode_publisher_->publish(msg);
-}
 
 /**
  * @brief Publish a trajectory setpoint (vel)

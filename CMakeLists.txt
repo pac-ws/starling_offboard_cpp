@@ -66,6 +66,20 @@ ament_target_dependencies(starling_offboard_cpp
 )
 install(TARGETS starling_offboard_cpp DESTINATION lib/${PROJECT_NAME})
 
+add_executable(starling_transform_test_cpp src/starling_transform_test.cpp)
+ament_target_dependencies(starling_transform_test_cpp
+    rclcpp 
+    px4_msgs 
+    Eigen3 
+    eigen3_cmake_module 
+    GeographicLib
+    geometry_msgs 
+    nav_msgs
+    sensor_msgs 
+    rosbag2_cpp
+)
+install(TARGETS starling_transform_test_cpp DESTINATION lib/${PROJECT_NAME})
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
