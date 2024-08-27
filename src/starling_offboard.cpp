@@ -368,11 +368,11 @@ void StarlingOffboard::timer_callback(){
                 std::cout << "State: " << state_ << std::endl;
                 RCLCPP_INFO(this->get_logger(), "Takeoff complete -- reached setpoint within TOL");
             }
-	    else {
-		    // offboard_control_mode needs to be paired with trajectory_setpoint
-		    publish_offboard_control_mode(true, false);
-		    publish_trajectory_setpoint_pos(takeoff_pos_ned);
-	    }
+            else {
+                // offboard_control_mode needs to be paired with trajectory_setpoint
+                publish_offboard_control_mode(true, false);
+                publish_trajectory_setpoint_pos(takeoff_pos_ned);
+            }
 
             break;
 

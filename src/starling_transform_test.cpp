@@ -290,18 +290,9 @@ void StarlingOffboard::add_translation_to_transforms(const double lat1, const do
         double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
         double z = 0;
 
-        double x_inv = distance * cos(azimuth_target_to_origin * M_PI / 180.0);
-        double y_inv = distance * sin(azimuth_target_to_origin * M_PI / 180.0);
-        double z_inv = 0;
-
         translation = Eigen::Vector3f(x, y, z);
-        //translation = Eigen::Vector3f(0., 0., 0.);
-        //inv_translation = Eigen::Vector3f(x_inv, y_inv, z_inv);
-        inv_translation = -translation;
 
         T_miss_ned.block<3,1>(0,3) = translation;
-        //T_ned_miss.block<3,1>(0,3) = inv_translation;
-
         T_ned_miss = T_miss_ned.inverse();
 
         std::cout << "Transform from mission to NED frame" << std::endl;
