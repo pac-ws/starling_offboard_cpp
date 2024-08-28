@@ -113,7 +113,10 @@ public:
         // TODO revert x,y flip
         R_z = Eigen::AngleAxisf(heading, Eigen::Vector3f::UnitZ()).toRotationMatrix();
         R_x = Eigen::AngleAxisf(M_PI/2., Eigen::Vector3f::UnitX()).toRotationMatrix();
+        
+        // TODO currently not using this 
         R = R_z * R_x;
+
         T_miss_ned.block<3,3>(0,0) = R_z;
 
         takeoff_pos << 1.0, 1.0, takeoff_z, 1.0;
@@ -143,7 +146,14 @@ public:
 
         global_pos_subscription_ = this->create_subscription<px4_msgs::msg::VehicleGlobalPosition>("fmu/out/vehicle_global_position", qos, [this](const px4_msgs::msg::VehicleGlobalPosition::UniquePtr msg){
             global_pos_msg_ = *msg;
-	        gps_received = true;
+            //gps_received = true;
+        });
+
+        gps_subscription_ = this->create_subscription<px4_msgs::msg::SensorGps>("fmu/out/vehicle_gps_position", qos, [this](const px4_msgs::msg::SensorGps::UniquePtr msg){
+                gps_pos_msg_ = *msg;
+                gps_lat = convert_raw_gps_to_degrees(gps_pos_msg_.lat);
+                gps_lon = convert_raw_gps_to_degrees(gps_pos_msg_.lon); 
+                gps_received = true;
         });
 
         takeoff_subscription_ = this->create_subscription<std_msgs::msg::Bool>("takeoff", qos, [this](const std_msgs::msg::Bool::UniquePtr msg){
@@ -192,9 +202,13 @@ private:
     rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr status_sub_;
 	rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr pos_subscription_;
     rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr global_pos_subscription_;
+    rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr gps_subscription_; 
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr takeoff_subscription_;
 	px4_msgs::msg::VehicleLocalPosition pos_msg_;
     px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
+    px4_msgs::msg::SensorGps gps_pos_msg_;
+
+    float convert_raw_gps_to_degrees(const int32_t raw);
     
     // Pose history
     nav_msgs::msg::Path path;
@@ -203,6 +217,9 @@ private:
     bool takeoff_cmd_received = false;
 
     bool gps_received = false;
+
+    float gps_lat;
+    float gps_lon;
 
     double lon_origin;
     double lat_origin;
@@ -282,9 +299,8 @@ void StarlingOffboard::timer_callback(){
 
                 // Global startup location
                 RCLCPP_INFO(this->get_logger(), "Global received");
-                RCLCPP_INFO(this->get_logger(), "lat: %.16f", global_pos_msg_.lat);
-                RCLCPP_INFO(this->get_logger(), "lon: %.16f", global_pos_msg_.lon);
-                RCLCPP_INFO(this->get_logger(), "alt: %.8f", global_pos_msg_.alt);
+                RCLCPP_INFO(this->get_logger(), "lat: %.8f", gps_lat);
+                RCLCPP_INFO(this->get_logger(), "lon: %.8f", gps_lon);
 
                 // Compute the translation from the home position to the current (start up position)
                 double distance;
@@ -292,7 +308,7 @@ void StarlingOffboard::timer_callback(){
                 double azimuth_target_to_origin;
 
                 const GeographicLib::Geodesic geod = GeographicLib::Geodesic::WGS84();
-                geod.Inverse(lat_origin, lon_origin, global_pos_msg_.lat, global_pos_msg_.lon, distance, azimuth_origin_to_target, azimuth_target_to_origin);
+                geod.Inverse(lat_origin, lon_origin, gps_lat, gps_lon, distance, azimuth_origin_to_target, azimuth_target_to_origin);
 
                 RCLCPP_INFO(this->get_logger(), "Distance to origin: %f", distance);
                 RCLCPP_INFO(this->get_logger(), "Azimuth origin to target: %f", azimuth_origin_to_target);
@@ -409,6 +425,10 @@ void StarlingOffboard::timer_callback(){
 
             break;
     }
+}
+
+float StarlingOffboard::convert_raw_gps_to_degrees(const int32_t raw){
+    return (float)raw / 1e7;
 }
 
 /**
