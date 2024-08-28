@@ -28,11 +28,6 @@
 #define ALT_HOME 7.699385643005371
 #define Z_REF -0.0377647
 
-#define LAT_HOME 39.94901115531301
-#define LON_HOME -75.18825979871113
-
-#define HEADING_NED_TO_FRD 2.4
-
 #define _USE_MATH_DEFINES
 #include <math.h>
 
@@ -93,8 +88,17 @@ public:
 	StarlingOffboard() : Node("starling_offboard")
 	{
         // Parameters
-        this->declare_parameter<float>("takeoff_z", -2.0);
-        this->get_parameter("takeoff_z", takeoff_z);
+        this->declare_parameter<double>("lon", 39.94901115531301);
+        this->get_parameter("lon", lon_origin);
+    
+        this->declare_parameter<double>("lat", -75.18825979871113);
+        this->get_parameter("lat", lat_origin);
+
+        this->declare_parameter<float>("heading", 2.4);
+        this->get_parameter("heading", heading);
+
+        this->declare_parameter<float>("alt", -2.0);
+        this->get_parameter("alt", takeoff_z);
 
         this->declare_parameter<float>("scale", 1.0);
         this->get_parameter("scale", scale);
@@ -107,7 +111,7 @@ public:
         
         // Transformation matrix from Mission to NED
         // TODO revert x,y flip
-        R_z = Eigen::AngleAxisf(HEADING_NED_TO_FRD, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        R_z = Eigen::AngleAxisf(heading, Eigen::Vector3f::UnitZ()).toRotationMatrix();
         R_x = Eigen::AngleAxisf(M_PI/2., Eigen::Vector3f::UnitX()).toRotationMatrix();
         R = R_z * R_x;
         T_miss_ned.block<3,3>(0,0) = R_z;
@@ -200,6 +204,10 @@ private:
 
     bool gps_received = false;
 
+    double lon_origin;
+    double lat_origin;
+    float heading;
+
     float takeoff_z;
 	bool takeoff = false;
 	bool waypt_reached = false;
@@ -263,18 +271,20 @@ void StarlingOffboard::timer_callback(){
     switch (state_) {
 
         case State::IDLE:
-	        std::cout << "State: " << state_ << std::endl;
+            RCLCPP_INFO(this->get_logger(), "State: idle");
 
             if (gps_received){
 
-                // Compute the translation from the home position to the current (start up position)
-                std::cout << "lat: " << global_pos_msg_.lat << std::endl;
-                std::cout << "lon: " << global_pos_msg_.lon << std::endl;
-                std::cout << "alt: " << global_pos_msg_.alt << std::endl;
-                std::cout << "z_ref :" << pos_msg_.z << std::endl;
+                // Global origin
+                RCLCPP_INFO(this->get_logger(), "Global origin");
+                RCLCPP_INFO(this->get_logger(), "lat: %.16f", lat_origin);
+                RCLCPP_INFO(this->get_logger(), "lon: %.16f", lon_origin);
 
-                // Altitude reference is based on vehicle_local_position.z not the GPS ALT. GPS altitude is unstable.
-                //translation = compute_translation(LAT_HOME, LON_HOME, 0.0, global_pos_msg_.lat, global_pos_msg_.lon, pos_msg_.z);
+                // Global startup location
+                RCLCPP_INFO(this->get_logger(), "Global received");
+                RCLCPP_INFO(this->get_logger(), "lat: %.16f", global_pos_msg_.lat);
+                RCLCPP_INFO(this->get_logger(), "lon: %.16f", global_pos_msg_.lon);
+                RCLCPP_INFO(this->get_logger(), "alt: %.8f", global_pos_msg_.alt);
 
                 // Compute the translation from the home position to the current (start up position)
                 double distance;
@@ -282,12 +292,12 @@ void StarlingOffboard::timer_callback(){
                 double azimuth_target_to_origin;
 
                 const GeographicLib::Geodesic geod = GeographicLib::Geodesic::WGS84();
-                geod.Inverse(LAT_HOME, LON_HOME, global_pos_msg_.lat, global_pos_msg_.lon, distance, azimuth_origin_to_target, azimuth_target_to_origin);
+                geod.Inverse(lat_origin, lon_origin, global_pos_msg_.lat, global_pos_msg_.lon, distance, azimuth_origin_to_target, azimuth_target_to_origin);
 
-                std::cout << "Distance: " << distance << std::endl;
-                std::cout << "Azimuth origin to target: " << azimuth_origin_to_target << std::endl;
-                std::cout << "Azimuth target to origin: " << azimuth_target_to_origin << std::endl;
-        
+                RCLCPP_INFO(this->get_logger(), "Distance to origin: %f", distance);
+                RCLCPP_INFO(this->get_logger(), "Azimuth origin to target: %f", azimuth_origin_to_target);
+                RCLCPP_INFO(this->get_logger(), "Azimuth target to origin: %f", azimuth_target_to_origin);
+
                 double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
                 double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
                 double z = pos_msg_.z;
@@ -295,32 +305,29 @@ void StarlingOffboard::timer_callback(){
                 translation = Eigen::Vector3f(x, y, z);
 
                 T_miss_ned.block<3,1>(0,3) = translation;
-                std::cout << "T_miss_ned: " << std::endl;
-                std::cout << T_miss_ned << std::endl;
-
                 T_ned_miss = T_miss_ned.inverse();
-                std::cout << "T_ned_miss: " << std::endl;
-                std::cout << T_ned_miss << std::endl;
 
                 assert ((T_miss_ned * T_ned_miss).isApprox(Eigen::Matrix4f::Identity(), 0.001));
 
                 takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
-                std::cout << "Takeoff pos (miss): " << takeoff_pos << std::endl;
-                std::cout << "Takeoff pos (ned): " << takeoff_pos_ned << std::endl;
+
+                RCLCPP_INFO(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
+                RCLCPP_INFO(this->get_logger(), "Takeoff pos (miss): %f, %f, %f", takeoff_pos[0], takeoff_pos[1], takeoff_pos[2]);
+                RCLCPP_INFO(this->get_logger(), "Takeoff pos (ned): %f, %f, %f", takeoff_pos_ned[0], takeoff_pos_ned[1], takeoff_pos_ned[2]);
                
                 assert (tform(takeoff_pos_ned, T_ned_miss).isApprox(takeoff_pos, 0.001));
 
                 // TODO 
                 /*
                 if (takeoff_cmd_received) {
-                state_ = State::TAKEOFF;
-                takeoff_cmd_received = false;
+                    state_ = State::ARMING;
+                    takeoff_cmd_received = false;
                 }
                 */
 
                 // TODO
                 state_ = State::ARMING;
-                std::cout << "State: " << state_ << std::endl;
+                RCLCPP_INFO(this->get_logger(), "State: arming");
             }
             break;
 

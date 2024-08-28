@@ -1,0 +1,25 @@
+launch:
+
+# start a turtlesim_node in the turtlesim1 namespace
+- node:
+    pkg: "starling_offboard_cpp"
+    exec: "starling_offboard_cpp"
+    name: "starling_offboard_cpp"
+    namespace: "r9"
+
+    param:
+      -
+        name: "lat"
+        value: 39.94901115531301
+      -
+        name: "lon"
+        value: -75.18825979871113
+      -
+        name: "heading"
+        value: 2.4
+      -
+        name: "alt"
+        value: -1.0
+      -
+        name: "scale"
+        value: 1.0
