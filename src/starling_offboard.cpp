@@ -25,13 +25,13 @@
 #include <GeographicLib/Geodesic.hpp>
 
 // Origins and offsets
-#define LAT_HOME 39.941135138572534
-#define LON_HOME -75.1986412747915
 #define ALT_HOME 7.699385643005371
 #define Z_REF -0.0377647
 
-//#define HEADING_NED_TO_FRD 2.919225215
-#define HEADING_NED_TO_FRD  -0.570442259311676
+#define LAT_HOME 39.94901115531301
+#define LON_HOME -75.18825979871113
+
+#define HEADING_NED_TO_FRD 2.4
 
 #define _USE_MATH_DEFINES
 #include <math.h>
@@ -93,14 +93,14 @@ public:
 	StarlingOffboard() : Node("starling_offboard")
 	{
         // Parameters
-        this->declare_parameter<float>("takeoff_z", -1.0);
+        this->declare_parameter<float>("takeoff_z", -2.0);
         this->get_parameter("takeoff_z", takeoff_z);
 
         this->declare_parameter<float>("scale", 1.0);
         this->get_parameter("scale", scale);
 
         // For consistency...
-        clock_ = this->get_clock();
+        clock_ = std::make_shared<rclcpp::Clock>();
 
         // Number of waypoints to set before attempting to enter offboard mode
 		offboard_setpoint_counter_ = 0;
@@ -147,7 +147,7 @@ public:
         });
 
         // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
-        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("cmd_vel", qos, std::bind(&StarlingOffboard::update_vel, this, std::placeholders::_1));
+        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("/lpac/r2/cmd_vel", qos, std::bind(&StarlingOffboard::update_vel, this, std::placeholders::_1));
         trajectory_setpoint_publisher_ = this->create_publisher<px4_msgs::msg::TrajectorySetpoint>("fmu/in/trajectory_setpoint", 5);
 
         // Position Translation (VehicleLocalPosition [PX4] to PoseStamped [GNN])
@@ -383,17 +383,22 @@ void StarlingOffboard::timer_callback(){
             // If the message rate drops bellow 2Hz, the drone exits offboard control mode
             publish_offboard_control_mode(false, true);
             
-	    // TODO time source difference bug
-            publish_trajectory_setpoint_vel(vel_ned);
+	    //// TODO time source difference bug
+            //publish_trajectory_setpoint_vel(vel_ned);
 
-            //rclcpp::Duration duration = clock_->now() - time_last_vel_update;
-            //if (duration.seconds() > 0.5) {
-            //    RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
-            //    publish_trajectory_setpoint_vel(stop_vel);
-            //}
-            //else {
-            //    publish_trajectory_setpoint_vel(vel_ned);
-            //}
+	    
+	    rclcpp::Time time_now = clock_->now();
+
+            rclcpp::Duration duration = time_now - time_last_vel_update;
+            if (duration.seconds() > 0.5) {
+                RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
+                publish_trajectory_setpoint_vel(stop_vel);
+            }
+            else {
+                publish_trajectory_setpoint_vel(vel_ned);
+		time_last_vel_update = time_now;
+            }
+
             break;
     }
 }
