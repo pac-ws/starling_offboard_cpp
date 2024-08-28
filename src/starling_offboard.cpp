@@ -88,10 +88,10 @@ public:
 	StarlingOffboard() : Node("starling_offboard")
 	{
         // Parameters
-        this->declare_parameter<double>("lon", 39.94901115531301);
+        this->declare_parameter<double>("lon", 0.0);
         this->get_parameter("lon", lon_origin);
     
-        this->declare_parameter<double>("lat", -75.18825979871113);
+        this->declare_parameter<double>("lat", 0.0);
         this->get_parameter("lat", lat_origin);
 
         this->declare_parameter<float>("heading", 2.4);
@@ -151,7 +151,7 @@ public:
         });
 
         // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
-        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("/lpac/r2/cmd_vel", qos, std::bind(&StarlingOffboard::update_vel, this, std::placeholders::_1));
+        gnn_vel_subscription_ = this->create_subscription<geometry_msgs::msg::TwistStamped>("cmd_vel", qos, std::bind(&StarlingOffboard::update_vel, this, std::placeholders::_1));
         trajectory_setpoint_publisher_ = this->create_publisher<px4_msgs::msg::TrajectorySetpoint>("fmu/in/trajectory_setpoint", 5);
 
         // Position Translation (VehicleLocalPosition [PX4] to PoseStamped [GNN])
@@ -394,16 +394,17 @@ void StarlingOffboard::timer_callback(){
             //publish_trajectory_setpoint_vel(vel_ned);
 
 	    
-	    rclcpp::Time time_now = clock_->now();
+	        rclcpp::Time time_now = clock_->now();
 
             rclcpp::Duration duration = time_now - time_last_vel_update;
-            if (duration.seconds() > 0.5) {
+            if (duration.seconds() > 1.0) {
                 RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
                 publish_trajectory_setpoint_vel(stop_vel);
             }
             else {
+                RCLCPP_INFO(this->get_logger(), "Sending mission velocity (%f, %f, %f)", vel_ned[0], vel_ned[1], vel_ned[2]);
                 publish_trajectory_setpoint_vel(vel_ned);
-		time_last_vel_update = time_now;
+		        time_last_vel_update = time_now;
             }
 
             break;
