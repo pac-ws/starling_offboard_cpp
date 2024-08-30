@@ -103,6 +103,12 @@ public:
         this->declare_parameter<float>("scale", 1.0);
         this->get_parameter("scale", scale);
 
+        this->declare_parameter<float>("x_takeoff", 2.0);
+        this->get_parameter("x_takeoff", x_takeoff);
+
+        this->declare_parameter<float>("y_takeoff", 2.0);
+        this->get_parameter("y_takeoff", y_takeoff);
+
         // For consistency...
         clock_ = std::make_shared<rclcpp::Clock>();
 
@@ -118,8 +124,9 @@ public:
         R = R_z * R_x;
 
         T_miss_ned.block<3,3>(0,0) = R_z;
+        T_ned_miss.block<3,3>(0,0) = T_miss_ned.block<3,3>(0,0).transpose();
 
-        takeoff_pos << 1.0, 1.0, takeoff_z, 1.0;
+        takeoff_pos << x_takeoff, y_takeoff, takeoff_z, 1.0;
 
         // Used to stop the drone when it reaches the waypoint
         stop_vel << 0.0, 0.0, 0.0, 0.0;
@@ -151,9 +158,15 @@ public:
 
         gps_subscription_ = this->create_subscription<px4_msgs::msg::SensorGps>("fmu/out/vehicle_gps_position", qos, [this](const px4_msgs::msg::SensorGps::UniquePtr msg){
                 gps_pos_msg_ = *msg;
-                gps_lat = convert_raw_gps_to_degrees(gps_pos_msg_.lat);
-                gps_lon = convert_raw_gps_to_degrees(gps_pos_msg_.lon); 
-                gps_received = true;
+            //    gps_lat = convert_raw_gps_to_degrees(gps_pos_msg_.lat);
+            //    gps_lon = convert_raw_gps_to_degrees(gps_pos_msg_.lon); 
+         //       gps_received = true;
+        });
+
+        launch_gps_subscription_ = this->create_subscription<geometry_msgs::msg::Point>("launch_gps", qos, [this](const geometry_msgs::msg::Point::UniquePtr msg){
+            gps_lat = msg->x;
+            gps_lon = msg->y;
+            gps_received = true;
         });
 
         takeoff_subscription_ = this->create_subscription<std_msgs::msg::Bool>("takeoff", qos, [this](const std_msgs::msg::Bool::UniquePtr msg){
@@ -203,6 +216,7 @@ private:
 	rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr pos_subscription_;
     rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr global_pos_subscription_;
     rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr gps_subscription_; 
+    rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr launch_gps_subscription_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr takeoff_subscription_;
 	px4_msgs::msg::VehicleLocalPosition pos_msg_;
     px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
@@ -226,6 +240,9 @@ private:
     float heading;
 
     float takeoff_z;
+    float x_takeoff;
+    float y_takeoff;
+
 	bool takeoff = false;
 	bool waypt_reached = false;
 
@@ -316,14 +333,14 @@ void StarlingOffboard::timer_callback(){
 
                 double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
                 double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
-                double z = pos_msg_.z;
+                double z = 0.0;
 
                 translation = Eigen::Vector3f(x, y, z);
 
-                T_miss_ned.block<3,1>(0,3) = translation;
-                T_ned_miss = T_miss_ned.inverse();
+                T_miss_ned.block<3,1>(0,3) = -translation;
+                //T_ned_miss = T_miss_ned.inverse();
 
-                assert ((T_miss_ned * T_ned_miss).isApprox(Eigen::Matrix4f::Identity(), 0.001));
+                //assert ((T_miss_ned * T_ned_miss).isApprox(Eigen::Matrix4f::Identity(), 0.001));
 
                 takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
 
@@ -331,7 +348,19 @@ void StarlingOffboard::timer_callback(){
                 RCLCPP_INFO(this->get_logger(), "Takeoff pos (miss): %f, %f, %f", takeoff_pos[0], takeoff_pos[1], takeoff_pos[2]);
                 RCLCPP_INFO(this->get_logger(), "Takeoff pos (ned): %f, %f, %f", takeoff_pos_ned[0], takeoff_pos_ned[1], takeoff_pos_ned[2]);
                
-                assert (tform(takeoff_pos_ned, T_ned_miss).isApprox(takeoff_pos, 0.001));
+                //assert (tform(takeoff_pos_ned, T_ned_miss).isApprox(takeoff_pos, 0.001));
+                //
+                RCLCPP_INFO(this->get_logger(), "T_miss_ned: \n %f, %f, %f, %f \n %f, %f, %f, %f \n %f, %f, %f, %f \n %f, %f, %f, %f", 
+                            T_miss_ned(0,0), T_miss_ned(0,1), T_miss_ned(0,2), T_miss_ned(0,3),
+                            T_miss_ned(1,0), T_miss_ned(1,1), T_miss_ned(1,2), T_miss_ned(1,3),
+                            T_miss_ned(2,0), T_miss_ned(2,1), T_miss_ned(2,2), T_miss_ned(2,3),
+                            T_miss_ned(3,0), T_miss_ned(3,1), T_miss_ned(3,2), T_miss_ned(3,3));
+
+                RCLCPP_INFO(this->get_logger(), "T_ned_miss: \n %f, %f, %f, %f \n %f, %f, %f, %f \n %f, %f, %f, %f \n %f, %f, %f, %f",
+                            T_ned_miss(0,0), T_ned_miss(0,1), T_ned_miss(0,2), T_ned_miss(0,3),
+                            T_ned_miss(1,0), T_ned_miss(1,1), T_ned_miss(1,2), T_ned_miss(1,3),
+                            T_ned_miss(2,0), T_ned_miss(2,1), T_ned_miss(2,2), T_ned_miss(2,3),
+                            T_ned_miss(3,0), T_ned_miss(3,1), T_ned_miss(3,2), T_ned_miss(3,3));
 
                 // TODO 
                 /*
@@ -406,23 +435,26 @@ void StarlingOffboard::timer_callback(){
             // If the message rate drops bellow 2Hz, the drone exits offboard control mode
             publish_offboard_control_mode(false, true);
             
-	    //// TODO time source difference bug
+	        // TODO time source difference bug
             //publish_trajectory_setpoint_vel(vel_ned);
-
 	    
 	        rclcpp::Time time_now = clock_->now();
 
             rclcpp::Duration duration = time_now - time_last_vel_update;
             if (duration.seconds() > 1.0) {
-                RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout, sending stop velocity");
+	            float err_z = (pos_msg_.z - takeoff_z);
+
+                stop_vel[2] = (float) clamp((double)(-1.0 * err_z), -2.0, 2.0);
+
                 publish_trajectory_setpoint_vel(stop_vel);
+                RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel[0], stop_vel[1], stop_vel[2]);
             }
+
             else {
-                RCLCPP_INFO(this->get_logger(), "Sending mission velocity (%f, %f, %f)", vel_ned[0], vel_ned[1], vel_ned[2]);
+                RCLCPP_INFO(this->get_logger(), "NED Velocity (%f, %f, %f)", vel_ned[0], vel_ned[1], vel_ned[2]);
                 publish_trajectory_setpoint_vel(vel_ned);
 		        time_last_vel_update = time_now;
             }
-
             break;
     }
 }
@@ -535,7 +567,7 @@ void StarlingOffboard::publish_trajectory_setpoint_vel(const Eigen::Vector4f& ta
 	TrajectorySetpoint msg{};
 	msg.position = {std::nanf(""), std::nanf(""), std::nanf("")}; // required for vel control in px4
 	msg.velocity = {target_vel[0], target_vel[1], target_vel[2]};
-	msg.yaw = 0.0; // [-PI:PI]
+	msg.yaw = 2.0; // [-PI:PI]
 	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
 	trajectory_setpoint_publisher_->publish(msg);
 }

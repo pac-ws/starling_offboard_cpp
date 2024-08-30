@@ -14,6 +14,12 @@ launch:
   - arg:
       name: "scale"
       default: "1.0"
+  - arg:
+      name: "x_takeoff"
+      default: "1.0"
+  - arg:
+      name: "y_takeoff"
+      default: "1.0"
 
   - node:
       pkg: "starling_offboard_cpp"
@@ -35,3 +41,9 @@ launch:
         -
           name: "scale"
           value: "$(var scale)"
+        -
+          name: "x_takeoff"
+          value: "$(var x_takeoff)"
+        -
+          name: "y_takeoff"
+          value: "$(var y_takeoff)"
