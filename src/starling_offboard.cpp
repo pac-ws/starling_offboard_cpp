@@ -109,6 +109,9 @@ public:
         this->declare_parameter<float>("y_takeoff", 2.0);
         this->get_parameter("y_takeoff", y_takeoff);
 
+        this->declare_parameter<float>("yaw", 2.4);
+        this->get_parameter("yaw", yaw);
+
         // For consistency...
         clock_ = std::make_shared<rclcpp::Clock>();
 
@@ -242,6 +245,7 @@ private:
     float takeoff_z;
     float x_takeoff;
     float y_takeoff;
+    float yaw;
 
 	bool takeoff = false;
 	bool waypt_reached = false;
@@ -567,7 +571,7 @@ void StarlingOffboard::publish_trajectory_setpoint_vel(const Eigen::Vector4f& ta
 	TrajectorySetpoint msg{};
 	msg.position = {std::nanf(""), std::nanf(""), std::nanf("")}; // required for vel control in px4
 	msg.velocity = {target_vel[0], target_vel[1], target_vel[2]};
-	msg.yaw = 2.0; // [-PI:PI]
+	msg.yaw = yaw; // [-PI:PI]
 	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
 	trajectory_setpoint_publisher_->publish(msg);
 }
@@ -579,7 +583,7 @@ void StarlingOffboard::publish_trajectory_setpoint_pos(const Eigen::Vector4f& ta
 {
 	TrajectorySetpoint msg{};
 	msg.position= {target_pos[0], target_pos[1], target_pos[2]};
-	msg.yaw = 0.0; // [-PI:PI]
+	msg.yaw = yaw; // [-PI:PI]
 	msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
 	trajectory_setpoint_publisher_->publish(msg);
 }
@@ -593,24 +597,24 @@ void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::Shared
     const float kP = 1.0;
     const float err_z = (pos_msg_.z - takeoff_z);
 
-    // Clamp the GNN velocity to [-1, 1], with mission scale factor
-    // NOTE Flipping x and y to match the mission frame
-    // TODO this is bugged? avoid for square_vel test
-   // const Eigen::Vector4f vel_mission (
-   //                            (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -3.0, 3.0),
-   //                            (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -3.0, 3.0), 
-   //                            -kP * err_z,
-   //                            1.0);
+    // const Eigen::Vector4f vel_mission (
+    //                           (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -2.0, 2.0),
+    //                           (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -2.0, 2.0), 
+    //                           (float) clamp((double)(-kP * err_z), -2.0, 2.0), 
+    //                           1.0);
 
+    const Eigen::Vector4f vel_mission (gnn_cmd_vel->twist.linear.y,
+                                       gnn_cmd_vel->twist.linear.x,
+                                       -kP * err_z,
+                                       1.0);
 
-    const Eigen::Vector4f vel_mission (
-                               (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -2.0, 2.0),
-                               (float) clamp(scale * gnn_cmd_vel->twist.linear.x, -2.0, 2.0), 
-                               (float) clamp((double)(-kP * err_z), -2.0, 2.0), 
-                               1.0);
-    
     // Transform the velocity from the mission frame to NED
     vel_ned = tform(vel_mission, T_miss_ned);
+
+    vel_ned[0] = (float) clamp((double)(scale * vel_ned[0]), -2.0, 2.0);
+    vel_ned[1] = (float) clamp((double)(scale * vel_ned[1]), -2.0, 2.0);
+    vel_ned[2] = (float) clamp((double)(scale * vel_ned[2]), -2.0, 2.0);
+
     time_last_vel_update = clock_->now();
 }
 
