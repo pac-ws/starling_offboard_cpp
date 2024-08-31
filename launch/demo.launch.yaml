@@ -1,0 +1,30 @@
+launch:
+
+- node:
+    pkg: "starling_demos_cpp"
+    exec: "square_vel"
+    name: "square_vel"
+    namespace: "r2"
+
+- node:
+    pkg: "starling_offboard_cpp"
+    exec: "starling_offboard_cpp"
+    name: "starling_offboard_cpp"
+    namespace: "r2"
+
+    param:
+      -
+        name: "lat"
+        value: 39.94901115531301
+      -
+        name: "lon"
+        value: -75.18825979871113
+      -
+        name: "heading"
+        value: 2.4
+      -
+        name: "alt"
+        value: -1.0
+      -
+        name: "scale"
+        value: 1.0

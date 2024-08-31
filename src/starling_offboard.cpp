@@ -97,7 +97,7 @@ public:
         this->declare_parameter<float>("heading", 2.4);
         this->get_parameter("heading", heading);
 
-        this->declare_parameter<float>("alt", -2.0);
+        this->declare_parameter<float>("alt", 2.0);
         this->get_parameter("alt", takeoff_z);
 
         this->declare_parameter<float>("scale", 1.0);
@@ -120,14 +120,14 @@ public:
         
         // Transformation matrix from Mission to NED
         // TODO revert x,y flip
-        R_z = Eigen::AngleAxisf(heading, Eigen::Vector3f::UnitZ()).toRotationMatrix();
-        R_x = Eigen::AngleAxisf(M_PI/2., Eigen::Vector3f::UnitX()).toRotationMatrix();
+        R_z = Eigen::AngleAxisf(3.*M_PI/2. - heading, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        R_x = Eigen::AngleAxisf(M_PI, Eigen::Vector3f::UnitX()).toRotationMatrix();
         
         // TODO currently not using this 
-        R = R_z * R_x;
+        R = R_x * R_z;
 
-        T_miss_ned.block<3,3>(0,0) = R_z;
-        T_ned_miss.block<3,3>(0,0) = T_miss_ned.block<3,3>(0,0).transpose();
+        T_ned_miss.block<3,3>(0,0) = R;
+        T_miss_ned.block<3,3>(0,0) = T_ned_miss.block<3,3>(0,0).transpose();
 
         takeoff_pos << x_takeoff, y_takeoff, takeoff_z, 1.0;
 
@@ -342,17 +342,24 @@ void StarlingOffboard::timer_callback(){
                 translation = Eigen::Vector3f(x, y, z);
 
                 T_miss_ned.block<3,1>(0,3) = -translation;
-                //T_ned_miss = T_miss_ned.inverse();
+                //T_ned_miss.block<3,1>(0,3) = -translation;
 
-                //assert ((T_miss_ned * T_ned_miss).isApprox(Eigen::Matrix4f::Identity(), 0.001));
+                T_ned_miss = T_miss_ned.inverse();
+                
+                auto current_mission_pos = tform(Eigen::Vector4f(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0), T_ned_miss);
+                RCLCPP_INFO(this->get_logger(), "Current mission pos: %f, %f, %f", current_mission_pos[0], current_mission_pos[1], current_mission_pos[2]);
+
+                assert ((T_miss_ned * T_ned_miss).isApprox(Eigen::Matrix4f::Identity(), 0.001));
 
                 takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
 
                 RCLCPP_INFO(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
                 RCLCPP_INFO(this->get_logger(), "Takeoff pos (miss): %f, %f, %f", takeoff_pos[0], takeoff_pos[1], takeoff_pos[2]);
                 RCLCPP_INFO(this->get_logger(), "Takeoff pos (ned): %f, %f, %f", takeoff_pos_ned[0], takeoff_pos_ned[1], takeoff_pos_ned[2]);
+
+                Eigen::Vector4f takeoff_pos_check = tform(takeoff_pos_ned, T_ned_miss);
+                RCLCPP_INFO(this->get_logger(), "Takeoff pos check: %f, %f, %f", takeoff_pos_check[0], takeoff_pos_check[1], takeoff_pos_check[2]);
                
-                //assert (tform(takeoff_pos_ned, T_ned_miss).isApprox(takeoff_pos, 0.001));
                 //
                 RCLCPP_INFO(this->get_logger(), "T_miss_ned: \n %f, %f, %f, %f \n %f, %f, %f, %f \n %f, %f, %f, %f \n %f, %f, %f, %f", 
                             T_miss_ned(0,0), T_miss_ned(0,1), T_miss_ned(0,2), T_miss_ned(0,3),
@@ -365,6 +372,8 @@ void StarlingOffboard::timer_callback(){
                             T_ned_miss(1,0), T_ned_miss(1,1), T_ned_miss(1,2), T_ned_miss(1,3),
                             T_ned_miss(2,0), T_ned_miss(2,1), T_ned_miss(2,2), T_ned_miss(2,3),
                             T_ned_miss(3,0), T_ned_miss(3,1), T_ned_miss(3,2), T_ned_miss(3,3));
+
+                assert (tform(takeoff_pos_ned, T_ned_miss).isApprox(takeoff_pos, 0.1));
 
                 // TODO 
                 /*
@@ -446,7 +455,7 @@ void StarlingOffboard::timer_callback(){
 
             rclcpp::Duration duration = time_now - time_last_vel_update;
             if (duration.seconds() > 1.0) {
-	            float err_z = (pos_msg_.z - takeoff_z);
+	            float err_z = (pos_msg_.z + takeoff_z);
 
                 stop_vel[2] = (float) clamp((double)(-1.0 * err_z), -2.0, 2.0);
 
@@ -489,8 +498,8 @@ Eigen::Vector3f StarlingOffboard::compute_translation(const double ref_lat, cons
 /**
  * @brief Transform the position from mission frame to NED
  */
-Eigen::Vector4f StarlingOffboard::tform(const Eigen::Vector4f &vec_mission, const Eigen::Matrix<float, 4, 4> &Tf){
-    Eigen::Vector4f vec_ned = Tf * vec_mission;
+Eigen::Vector4f StarlingOffboard::tform(const Eigen::Vector4f &vec_1, const Eigen::Matrix<float, 4, 4> &Tf){
+    Eigen::Vector4f vec_ned = Tf * vec_1;
     return vec_ned;
 }
 
@@ -595,7 +604,7 @@ void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::Shared
 {
     // Proportional controller to maintain altitude
     const float kP = 1.0;
-    const float err_z = (pos_msg_.z - takeoff_z);
+    const float err_z = (takeoff_z + pos_msg_.z);
 
     // const Eigen::Vector4f vel_mission (
     //                           (float) clamp(scale * gnn_cmd_vel->twist.linear.y, -2.0, 2.0),
@@ -603,10 +612,11 @@ void StarlingOffboard::update_vel(const geometry_msgs::msg::TwistStamped::Shared
     //                           (float) clamp((double)(-kP * err_z), -2.0, 2.0), 
     //                           1.0);
 
-    const Eigen::Vector4f vel_mission (gnn_cmd_vel->twist.linear.y,
-                                       gnn_cmd_vel->twist.linear.x,
-                                       -kP * err_z,
-                                       1.0);
+    
+    const Eigen::Vector4f vel_mission (gnn_cmd_vel->twist.linear.x,
+                                       gnn_cmd_vel->twist.linear.y,
+                                       kP * err_z,
+                                       0.0);
 
     // Transform the velocity from the mission frame to NED
     vel_ned = tform(vel_mission, T_miss_ned);
@@ -636,9 +646,9 @@ void StarlingOffboard::publish_pose(const px4_msgs::msg::VehicleLocalPosition::S
     gnn_pose.header.stamp = this->get_clock()->now();
     gnn_pose.header.frame_id = "map";
 
-    // NOTE Flpping x and y to match the mission frame
-    gnn_pose.pose.position.x = vehicle_mission_position[1];
-    gnn_pose.pose.position.y = vehicle_mission_position[0];
+    // TODO
+    gnn_pose.pose.position.x = vehicle_mission_position[0];
+    gnn_pose.pose.position.y = vehicle_mission_position[1];
     gnn_pose.pose.position.z = vehicle_mission_position[2];
     pose_publisher_->publish(gnn_pose);
 
