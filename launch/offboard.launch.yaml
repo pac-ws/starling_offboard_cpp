@@ -26,15 +26,15 @@ launch:
       exec: "starling_offboard_cpp"
       name: "starling_offboard_cpp"
       param:
-        -
-          name: "lat"
-          value: "$(var lat)"
-        -
-          name: "lon"
-          value: "$(var lon)"
-        -
-          name: "heading"
-          value: "$(var heading)"
+        #-
+        #  name: "lat"
+        #  value: "$(var lat)"
+        #-
+        #  name: "lon"
+        #  value: "$(var lon)"
+        #-
+        #  name: "heading"
+        #  value: "$(var heading)"
         -
           name: "alt"
           value: "$(var alt)"

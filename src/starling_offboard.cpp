@@ -168,6 +168,7 @@ public:
         });
 
         origin_gps_subscription_ = this->create_subscription<geometry_msgs::msg::Point>("origin_gps", qos, [this](const geometry_msgs::msg::Point::UniquePtr msg){
+            RCLCPP_INFO(this->get_logger(), "Origin GPS received");
             lon_origin = msg->x;
             lat_origin = msg->y;
             heading = msg->z;
@@ -175,6 +176,7 @@ public:
         });
 
         launch_gps_subscription_ = this->create_subscription<geometry_msgs::msg::Point>("launch_gps", qos, [this](const geometry_msgs::msg::Point::UniquePtr msg){
+            RCLCPP_INFO(this->get_logger(), "Launch GPS received");
             gps_lat = msg->x;
             gps_lon = msg->y;
             gps_received = true;
