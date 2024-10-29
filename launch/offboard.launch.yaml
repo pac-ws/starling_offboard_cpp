@@ -1,13 +1,13 @@
 launch:
-  - arg:
-      name: "lat"
-      default: "39.94901115531301"
-  - arg:
-      name: "lon"
-      default: "-75.18825979871113"
-  - arg:
-      name: "heading"
-      default: "2.4"
+  #- arg:
+  #    name: "lat"
+  #    default: "39.94901115531301"
+  #- arg:
+  #    name: "lon"
+  #    default: "-75.18825979871113"
+  #- arg:
+  #    name: "heading"
+  #    default: "2.4"
   - arg:
       name: "alt"
       default: "-1.0"

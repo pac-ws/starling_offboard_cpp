@@ -88,7 +88,7 @@ public:
 	StarlingOffboard() : Node("starling_offboard")
 	{
         // Parameters
-        this->declare_parameter<double>("lon", 0.0);
+        /*this->declare_parameter<double>("lon", 0.0);
         this->get_parameter("lon", lon_origin);
     
         this->declare_parameter<double>("lat", 0.0);
@@ -96,6 +96,7 @@ public:
 
         this->declare_parameter<float>("heading", 2.4);
         this->get_parameter("heading", heading);
+        */
 
         this->declare_parameter<float>("alt", 2.0);
         this->get_parameter("alt", takeoff_z);
@@ -166,6 +167,13 @@ public:
          //       gps_received = true;
         });
 
+        origin_gps_subscription_ = this->create_subscription<geometry_msgs::msg::Point>("origin_gps", qos, [this](const geometry_msgs::msg::Point::UniquePtr msg){
+            lon_origin = msg->x;
+            lat_origin = msg->y;
+            heading = msg->z;
+            origin_gps_received = true;
+        });
+
         launch_gps_subscription_ = this->create_subscription<geometry_msgs::msg::Point>("launch_gps", qos, [this](const geometry_msgs::msg::Point::UniquePtr msg){
             gps_lat = msg->x;
             gps_lon = msg->y;
@@ -219,6 +227,7 @@ private:
 	rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr pos_subscription_;
     rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr global_pos_subscription_;
     rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr gps_subscription_; 
+    rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr origin_gps_subscription_;
     rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr launch_gps_subscription_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr takeoff_subscription_;
 	px4_msgs::msg::VehicleLocalPosition pos_msg_;
@@ -234,6 +243,7 @@ private:
     bool takeoff_cmd_received = false;
 
     bool gps_received = false;
+    bool origin_gps_received = false;
 
     float gps_lat;
     float gps_lon;
@@ -311,7 +321,7 @@ void StarlingOffboard::timer_callback(){
         case State::IDLE:
             RCLCPP_INFO(this->get_logger(), "State: idle");
 
-            if (gps_received){
+            if (gps_received && origin_gps_received) {
 
                 // Global origin
                 RCLCPP_INFO(this->get_logger(), "Global origin");
