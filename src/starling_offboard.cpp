@@ -121,7 +121,7 @@ public:
         
         // Transformation matrix from Mission to NED
         // TODO revert x,y flip
-        R_z = Eigen::AngleAxisf(3.*M_PI/2. - heading, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+        /*R_z = Eigen::AngleAxisf(3.*M_PI/2. - heading, Eigen::Vector3f::UnitZ()).toRotationMatrix();
         R_x = Eigen::AngleAxisf(M_PI, Eigen::Vector3f::UnitX()).toRotationMatrix();
         
         // TODO currently not using this 
@@ -129,6 +129,7 @@ public:
 
         T_ned_miss.block<3,3>(0,0) = R;
         T_miss_ned.block<3,3>(0,0) = T_ned_miss.block<3,3>(0,0).transpose();
+        */
 
         takeoff_pos << x_takeoff, y_takeoff, takeoff_z, 1.0;
 
@@ -329,6 +330,7 @@ void StarlingOffboard::timer_callback(){
                 RCLCPP_INFO(this->get_logger(), "Global origin");
                 RCLCPP_INFO(this->get_logger(), "lat: %.16f", lat_origin);
                 RCLCPP_INFO(this->get_logger(), "lon: %.16f", lon_origin);
+                RCLCPP_INFO(this->get_logger(), "lon: %.16f", heading);
 
                 // Global startup location
                 RCLCPP_INFO(this->get_logger(), "Global received");
@@ -349,13 +351,20 @@ void StarlingOffboard::timer_callback(){
 
                 double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
                 double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
-                double z = 0.0;
+		double z = 0.0;
+           
+                R_z = Eigen::AngleAxisf(3.*M_PI/2. - heading, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+                R_x = Eigen::AngleAxisf(M_PI, Eigen::Vector3f::UnitX()).toRotationMatrix();
+        
+                // TODO currently not using this 
+                R = R_x * R_z;
+
+                T_ned_miss.block<3,3>(0,0) = R;
+                T_miss_ned.block<3,3>(0,0) = T_ned_miss.block<3,3>(0,0).transpose();
 
                 translation = Eigen::Vector3f(x, y, z);
 
                 T_miss_ned.block<3,1>(0,3) = -translation;
-                //T_ned_miss.block<3,1>(0,3) = -translation;
-
                 T_ned_miss = T_miss_ned.inverse();
                 
                 auto current_mission_pos = tform(Eigen::Vector4f(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0), T_ned_miss);
