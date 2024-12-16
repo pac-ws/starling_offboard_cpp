@@ -113,6 +113,9 @@ public:
         this->declare_parameter<float>("yaw", 2.4);
         this->get_parameter("yaw", yaw);
 
+        this->declare_parameter<int>("robot_id", 1);
+        this->get_parameter("robot_id", robot_id);
+
         // For consistency...
         clock_ = std::make_shared<rclcpp::Clock>();
 
@@ -169,7 +172,7 @@ public:
         });
 
         origin_gps_subscription_ = this->create_subscription<geometry_msgs::msg::Point>("/pac_gcs/mission_origin_gps", qos, [this](const geometry_msgs::msg::Point::UniquePtr msg){
-            RCLCPP_INFO(this->get_logger(), "Origin GPS received");
+            // RCLCPP_INFO(this->get_logger(), "Origin GPS received");
             lon_origin = msg->x;
             lat_origin = msg->y;
             heading = msg->z;
@@ -177,7 +180,7 @@ public:
         });
 
         launch_gps_subscription_ = this->create_subscription<geometry_msgs::msg::Point>("launch_gps", qos, [this](const geometry_msgs::msg::Point::UniquePtr msg){
-            RCLCPP_INFO(this->get_logger(), "Launch GPS received");
+            // RCLCPP_INFO(this->get_logger(), "Launch GPS received");
             gps_lat = msg->x;
             gps_lon = msg->y;
             gps_received = true;
@@ -259,6 +262,8 @@ private:
     float x_takeoff;
     float y_takeoff;
     float yaw;
+
+    int robot_id = 1;
 
 	bool takeoff = false;
 	bool waypt_reached = false;
@@ -371,6 +376,8 @@ void StarlingOffboard::timer_callback(){
                 RCLCPP_INFO(this->get_logger(), "Current mission pos: %f, %f, %f", current_mission_pos[0], current_mission_pos[1], current_mission_pos[2]);
 
                 assert ((T_miss_ned * T_ned_miss).isApprox(Eigen::Matrix4f::Identity(), 0.001));
+                takeoff_pos[0] = current_mission_pos[0];
+                takeoff_pos[1] = current_mission_pos[1];
 
                 takeoff_pos_ned  = tform(takeoff_pos, T_miss_ned);
 
@@ -700,7 +707,7 @@ void StarlingOffboard::publish_vehicle_command(uint16_t command, float param1, f
 	msg.param6 = param6;
 	msg.param7 = param7;
 	msg.command = command;
-	msg.target_system = 1;
+	msg.target_system = robot_id + 1;
 	msg.target_component = 1;
 	msg.source_system = 1;
 	msg.source_component = 1;
