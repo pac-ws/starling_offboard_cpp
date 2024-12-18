@@ -14,6 +14,9 @@ launch:
   - arg:
       name: 'robot_id'
       default: '1'
+  - arg:
+      name: 'env_scale_factor'
+      default: '4.0'
 
   - node:
       pkg: 'starling_offboard_cpp'
@@ -30,3 +33,5 @@ launch:
           value: '$(var x_takeoff)'
         - name: 'y_takeoff'
           value: '$(var y_takeoff)'
+        - name: 'env_scale_factor'
+          value: '$(var env_scale_factor)'
