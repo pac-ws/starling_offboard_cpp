@@ -1,10 +1,19 @@
 launch:
   - arg:
+      name: 'buffer_size'
+      default: '10'
+  - arg:
+      name: 'position_tolerance'
+      default: '1.0'
+  - arg:
+      name: 'max_speed'
+      default: '2.0'
+  - arg:
       name: 'alt'
       default: '-1.0'
   - arg:
-      name: 'scale'
-      default: '1.0'
+      name: 'yaw'
+      default: '0.0'
   - arg:
       name: 'x_takeoff'
       default: '1.0'
@@ -27,11 +36,17 @@ launch:
           value: '$(var robot_id)'
         - name: 'alt'
           value: '$(var alt)'
-        - name: 'scale'
-          value: '$(var scale)'
         - name: 'x_takeoff'
           value: '$(var x_takeoff)'
         - name: 'y_takeoff'
           value: '$(var y_takeoff)'
         - name: 'env_scale_factor'
           value: '$(var env_scale_factor)'
+        - name: 'buffer_size'
+          value: '$(var buffer_size)'
+        - name: 'position_tolerance'
+          value: '$(var position_tolerance)'
+        - name: 'max_speed'
+          value: '$(var max_speed)'
+        - name: 'yaw'
+          value: '$(var yaw)'
