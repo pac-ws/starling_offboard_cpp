@@ -91,7 +91,6 @@ class StarlingOffboard : public rclcpp::Node {
   rclcpp::Clock::SharedPtr clock_;
 
   px4_msgs::msg::VehicleLocalPosition pos_msg_;
-  px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
   px4_msgs::msg::SensorGps gps_pos_msg_;
 
   rclcpp::QoS qos_;
@@ -111,8 +110,6 @@ class StarlingOffboard : public rclcpp::Node {
   Params params_;
 
   struct Subscriptions {
-    // TODO: takeoff not being used. Remove?
-    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr takeoff;
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel;
     rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr
         mission_origin_gps;
@@ -122,8 +119,6 @@ class StarlingOffboard : public rclcpp::Node {
         vehicle_status;
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
         vehicle_local_pos;
-    rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr
-        vehicle_global_pos;
     rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
   };
   Subscriptions subs_;
@@ -152,8 +147,6 @@ class StarlingOffboard : public rclcpp::Node {
   void Disarm();
   void TimerCallback();
   void PathPublisherTimerCallback();
-  // TODO: Do we need this?
-  void SetHome(const double lat, const double lon, const double alt);
   bool HasReachedPos(const Eigen::Vector4d& target_pos);
   Eigen::Vector4d ComputeVel(const Eigen::Vector4d& target_pos);
   void VehicleLocalPosCallback(
@@ -180,10 +173,6 @@ class StarlingOffboard : public rclcpp::Node {
     return ss.str();
   }
 
-  // TODO: Do we need this?
-  Eigen::Vector3d ComputeTranslation(const double ref_lat, const double ref_lon,
-                                     const double ref_alt, const double lat,
-                                     const double lon, const double alt);
   /**
    * @brief Transform the position from mission frame to NED
    */

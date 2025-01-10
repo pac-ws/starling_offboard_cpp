@@ -68,16 +68,7 @@ void StarlingOffboard::InitializeSubscribers() {
             arming_state_ = msg->arming_state;
           });
 
-  // TODO: Do we need this?
-  subs_.vehicle_global_pos =
-      this->create_subscription<px4_msgs::msg::VehicleGlobalPosition>(
-          "fmu/out/vehicle_global_position", qos_,
-          [this](const px4_msgs::msg::VehicleGlobalPosition::UniquePtr msg) {
-            global_pos_msg_ = *msg;
-            // gps_received_ = true;
-          });
-
-  // TODO: Do we need this?
+  // Used if we need to bypass homify for whatever reason
   subs_.vehicle_gps_pos = this->create_subscription<px4_msgs::msg::SensorGps>(
       "fmu/out/vehicle_gps_position", qos_,
       [this](const px4_msgs::msg::SensorGps::UniquePtr msg) {
@@ -107,12 +98,6 @@ void StarlingOffboard::InitializeSubscribers() {
         gps_received_ = true;
       });
 
-  // TODO: Do we need this?
-  subs_.takeoff = this->create_subscription<std_msgs::msg::Bool>(
-      "takeoff", qos_, [this](const std_msgs::msg::Bool::UniquePtr msg) {
-        takeoff_cmd_received_ = msg->data;
-      });
-
   // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
   subs_.cmd_vel = this->create_subscription<geometry_msgs::msg::TwistStamped>(
       "cmd_vel", qos_,
@@ -132,6 +117,8 @@ void StarlingOffboard::InitializePublishers() {
   auto qos_reliable = rclcpp::QoS(rclcpp::QoSInitialization(
       rmw_qos_profile_default.history, params_.buffer_size));
   qos_reliable.reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE);
+
+  // High BW
   pubs_.nav_path =
       this->create_publisher<nav_msgs::msg::Path>("path", qos_reliable);
 
@@ -251,15 +238,6 @@ void StarlingOffboard::TimerCallback() {
         assert(TransformVec(takeoff_pos_ned_, T_ned_miss_)
                    .isApprox(takeoff_pos_, 0.1));
 
-        // TODO
-        /*
-        if (takeoff_cmd_received_) {
-            state_ = State::ARMING;
-            takeoff_cmd_received_ = false;
-        }
-        */
-
-        // TODO
         state_ = State::ARMING;
         RCLCPP_INFO(this->get_logger(), "State: arming");
       }
@@ -321,11 +299,7 @@ void StarlingOffboard::TimerCallback() {
 
       // offboard_control_mode needs to be paired with trajectory_setpoint
       // If the message rate drops bellow 2Hz, the drone exits offboard control
-      // mode
       PubOffboardControlMode(false, true);
-
-      // TODO time source difference bug
-      // PubTrajSetpointVel(vel_ned_);
 
       rclcpp::Time time_now = clock_->now();
 
@@ -335,14 +309,11 @@ void StarlingOffboard::TimerCallback() {
         stop_vel_[2] = -1.0 * err_z;
         ClampVelocity(stop_vel_);
         PubTrajSetpointVel(stop_vel_);
-        // RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout;
-        // stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1],
-        // stop_vel_[2]);
+        RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
       }
 
       else {
-        // RCLCPP_INFO(this->get_logger(), "NED Velocity (%f, %f, %f)",
-        // vel_ned_[0], vel_ned_[1], vel_ned_[2]);
+        //RCLCPP_INFO(this->get_logger(), "NED Velocity (%f, %f, %f)", vel_ned_[0], vel_ned_[1], vel_ned_[2]);
         PubTrajSetpointVel(vel_ned_);
         time_last_vel_update_ = time_now;
       }
@@ -384,31 +355,6 @@ void StarlingOffboard::PathPublisherTimerCallback() {
 }
 
 /**
- * @brief Compute the translation from the reference position to the current
- * position
- */
-// TODO double check this!!
-// TODO: Do we need this?
-Eigen::Vector3d StarlingOffboard::ComputeTranslation(
-    const double ref_lat, const double ref_lon, const double ref_alt,
-    const double lat, const double lon, const double alt) {
-  const double R = 6371000.0;  // Earth radius in meters
-  const double d_lat = (lat - ref_lat) * M_PI / 180.0;
-  const double d_lon = (lon - ref_lon) * M_PI / 180.0;
-  const double d_alt = alt - ref_alt;
-  const double x = R * d_lat;
-  const double y = R * d_lon * cos(lat * M_PI / 180.0);
-  const double z = d_alt;
-
-  std::cout << "d_lat: " << d_lat << "lat: " << lat << "ref_lat: " << ref_lat
-            << std::endl;
-  std::cout << "d_lon: " << d_lon << "lon: " << lon << "ref_lon: " << ref_lon
-            << std::endl;
-
-  return Eigen::Vector3d(x, y, z);
-}
-
-/**
  * @brief Compute the velocity to reach the target position
  */
 Eigen::Vector4d StarlingOffboard::ComputeVel(
@@ -435,15 +381,6 @@ bool StarlingOffboard::HasReachedPos(const Eigen::Vector4d& target_pos) {
   return err_x < params_.position_tolerance &&
          err_y < params_.position_tolerance &&
          err_z < params_.position_tolerance;
-}
-/**
- * @brief Set the home position of the drone
- */
-void StarlingOffboard::SetHome(const double lat, const double lon,
-                               const double alt) {
-  PubVehicleCommand(VehicleCommand::VEHICLE_CMD_DO_SET_HOME, 0.0, 0.0, lat, lon,
-                    static_cast<float>(alt));
-  RCLCPP_INFO(this->get_logger(), "Home position set");
 }
 
 /**
@@ -604,8 +541,6 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
 }
 
 int main(int argc, char* argv[]) {
-  std::cout << " Eigen version : " << EIGEN_MAJOR_VERSION << "."
-            << EIGEN_MINOR_VERSION << std::endl;
   std::cout << "Starting Starling offboard node..." << std::endl;
   setvbuf(stdout, NULL, _IONBF, BUFSIZ);
   rclcpp::init(argc, argv);
