@@ -15,18 +15,6 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
 
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff, 1.0;
 
-  // Transformation matrix from Mission to NED
-  // TODO revert x,y flip
-  /*R_z = Eigen::AngleAxisd(3.*M_PI/2. - heading_,
-  Eigen::Vector3d::UnitZ()).toRotationMatrix(); R_x = Eigen::AngleAxisd(M_PI,
-  Eigen::Vector3d::UnitX()).toRotationMatrix();
-
-  // TODO currently not using this
-  rot_mat_ = R_x * R_z;
-
-  T_ned_miss_.block<3,3>(0,0) = rot_mat_;
-  T_miss_ned_.block<3,3>(0,0) = T_ned_miss_.block<3,3>(0,0).transpose();
-  */
   // TODO Revert before real flight
   // 10Hz Timer
 }
@@ -82,7 +70,6 @@ void StarlingOffboard::InitializeSubscribers() {
       this->create_subscription<geometry_msgs::msg::Point>(
           "/pac_gcs/mission_origin_gps", qos_,
           [this](const geometry_msgs::msg::Point::UniquePtr msg) {
-            // RCLCPP_INFO(this->get_logger(), "Origin GPS received");
             mission_origin_lon_ = msg->x;
             mission_origin_lat_ = msg->y;
             heading_ = msg->z;
@@ -92,7 +79,6 @@ void StarlingOffboard::InitializeSubscribers() {
   subs_.launch_gps = this->create_subscription<geometry_msgs::msg::Point>(
       "launch_gps", qos_,
       [this](const geometry_msgs::msg::Point::UniquePtr msg) {
-        // RCLCPP_INFO(this->get_logger(), "Launch GPS received");
         launch_gps_lat_ = msg->x;
         launch_gps_lon_ = msg->y;
         gps_received_ = true;
@@ -119,8 +105,8 @@ void StarlingOffboard::InitializePublishers() {
   qos_reliable.reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE);
 
   // High BW
-  pubs_.nav_path =
-      this->create_publisher<nav_msgs::msg::Path>("path", qos_reliable);
+  //pubs_.nav_path =
+  //    this->create_publisher<nav_msgs::msg::Path>("path", qos_reliable);
 
   pubs_.drone_status =
       this->create_publisher<std_msgs::msg::String>("drone_status", qos_);
@@ -135,15 +121,14 @@ void StarlingOffboard::InitializePublishers() {
           "fmu/in/trajectory_setpoint", params_.buffer_size);
   timer_ = this->create_wall_timer(
       100ms, std::bind(&StarlingOffboard::TimerCallback, this));
-  path_pub_timer_ = this->create_wall_timer(
-      1000ms, std::bind(&StarlingOffboard::PathPublisherTimerCallback, this));
+  //path_pub_timer_ = this->create_wall_timer(
+  //    1000ms, std::bind(&StarlingOffboard::PathPublisherTimerCallback, this));
 }
 
 /**
  * @brief Main Loop
  */
 void StarlingOffboard::TimerCallback() {
-  // std::cout << "State: " << state_ << std::endl;
   //  Publish the current state
   auto state_msg = std_msgs::msg::String();
   state_msg.data = StateToString(state_);
@@ -152,7 +137,6 @@ void StarlingOffboard::TimerCallback() {
   // State Machine
   switch (state_) {
     case State::IDLE:
-      RCLCPP_INFO(this->get_logger(), "State: idle");
 
       if (gps_received_ && origin_gps_received_) {
         // Global origin
