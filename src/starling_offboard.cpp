@@ -122,7 +122,7 @@ void StarlingOffboard::InitializePublishers() {
   timer_ = this->create_wall_timer(
       100ms, std::bind(&StarlingOffboard::TimerCallback, this));
   //path_pub_timer_ = this->create_wall_timer(
-  //    1000ms, std::bind(&StarlingOffboard::PathPublisherTimerCallback, this));
+  //        1000ms, std::bind(&StarlingOffboard::PathPublisherTimerCallback, this));
 }
 
 /**
@@ -161,11 +161,11 @@ void StarlingOffboard::TimerCallback() {
                      launch_gps_lon_, distance, azimuth_origin_to_target,
                      azimuth_target_to_origin);
 
-        RCLCPP_INFO(this->get_logger(), "Distance to origin: %f", distance);
-        RCLCPP_INFO(this->get_logger(), "Azimuth origin to target: %f",
-                    azimuth_origin_to_target);
-        RCLCPP_INFO(this->get_logger(), "Azimuth target to origin: %f",
-                    azimuth_target_to_origin);
+        //RCLCPP_INFO(this->get_logger(), "Distance to origin: %f", distance);
+        //RCLCPP_INFO(this->get_logger(), "Azimuth origin to target: %f",
+        //            azimuth_origin_to_target);
+        //RCLCPP_INFO(this->get_logger(), "Azimuth target to origin: %f",
+        //            azimuth_target_to_origin);
 
         double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
         double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
@@ -181,14 +181,19 @@ void StarlingOffboard::TimerCallback() {
         Eigen::Matrix3d rot_mat = rot_mat_x * rot_mat_z;
 
         T_ned_miss_.block<3, 3>(0, 0) = rot_mat;
-        T_miss_ned_.block<3, 3>(0, 0) =
-            T_ned_miss_.block<3, 3>(0, 0).transpose();
+        T_miss_ned_.block<3, 3>(0, 0) = T_ned_miss_.block<3, 3>(0, 0).transpose();
 
         Eigen::Vector3d translation = Eigen::Vector3d(x, y, z);
         T_miss_ned_.block<3, 1>(0, 3) = -translation;
 
         T_ned_miss_ = T_miss_ned_.inverse();
 
+        // Set the desired yaw to the current heading (avoid rotation during takeoff)
+        // Note the distinction between the mission frame heading received from the GCS and the
+        // local heading used here
+        yaw = pos_msg_.heading;
+        
+        // Testing of the transformations
         Eigen::Vector4d current_mission_pos = TransformVec(
             Eigen::Vector4d(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0),
             T_ned_miss_);
@@ -411,7 +416,7 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
   msg.velocity = {static_cast<float>(target_vel[0]),
                  static_cast<float>(target_vel[1]),
                  static_cast<float>(target_vel[2])};
-  msg.yaw = static_cast<float>(params_.yaw);  // [-PI:PI]
+  msg.yaw = static_cast<float>(yaw);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
   pubs_.traj_setpoint->publish(msg);
 }
@@ -424,7 +429,7 @@ void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
   msg.position = {static_cast<float>(target_pos[0]),
                  static_cast<float>(target_pos[1]),
                  static_cast<float>(target_pos[2])};
-  msg.yaw = static_cast<float>(params_.yaw);  // [-PI:PI]
+  msg.yaw = static_cast<float>(yaw);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
   pubs_.traj_setpoint->publish(msg);
 }
