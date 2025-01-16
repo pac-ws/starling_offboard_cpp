@@ -95,6 +95,14 @@ void StarlingOffboard::InitializeSubscribers() {
           "fmu/out/vehicle_local_position", qos_,
           std::bind(&StarlingOffboard::VehicleLocalPosCallback, this,
                     std::placeholders::_1));
+
+  subs_.status_pac = this->create_subscription<std_msgs::msg::Int32>(
+          "/pac_gcs/status_pac", qos_,
+          [this](const std_msgs::msg::Int32::UniquePtr msg) {
+            if (msg->data == 4) {
+              takeoff_cmd_received_ = true;
+            }
+          });
 }
 
 void StarlingOffboard::InitializePublishers() {
@@ -228,7 +236,7 @@ void StarlingOffboard::TimerCallback() {
                    .isApprox(takeoff_pos_, 0.1));
 
         state_ = State::ARMING;
-        RCLCPP_INFO(this->get_logger(), "State: arming");
+        std::cout << "State: " << state_ << std::endl;
       }
       break;
 
@@ -242,7 +250,8 @@ void StarlingOffboard::TimerCallback() {
 
         if (arming_state_ == 2) {
           RCLCPP_INFO(this->get_logger(), "Vehicle armed");
-          state_ = State::TAKEOFF;
+          //state_ = State::TAKEOFF;
+          state_ = State::ARMED;
           std::cout << "State: " << state_ << std::endl;
         } else {
           RCLCPP_INFO(this->get_logger(), "Vehicle not armed");
@@ -254,13 +263,28 @@ void StarlingOffboard::TimerCallback() {
       // Send 10 setpoints before attempting to Arm
       // offboard_control_mode needs to be paired with trajectory_setpoint
       PubOffboardControlMode(true, false);
-      PubTrajSetpointPos(takeoff_pos_ned_);
+      //PubTrajSetpointPos(takeoff_pos_ned_);
+
+      // Do not attempt to liftoff yet
+      PubTrajSetpointPos(Eigen::Vector4d(0.0, 0.0, 0.0, 1.0));
 
       // stop the counter after reaching 11
       if (offboard_setpoint_counter_ < 11) {
         offboard_setpoint_counter_++;
       }
       break;
+
+    case State::ARMED:
+      // Await takeoff command from GCS, otherwise hold on the ground
+      if (takeoff_cmd_received_) {
+        state_ = State::TAKEOFF;
+        std::cout << "State: " << state_ << std::endl;
+      } else {
+        PubOffboardControlMode(true, false);
+        PubTrajSetpointPos(Eigen::Vector4d(0.0, 0.0, 0.0, 1.0));
+      }
+      break;
+
 
     case State::LANDING:
     case State::TAKEOFF:
@@ -280,7 +304,6 @@ void StarlingOffboard::TimerCallback() {
         PubOffboardControlMode(true, false);
         PubTrajSetpointPos(takeoff_pos_ned_);
       }
-
       break;
 
     // GNN, Square, etc..
@@ -298,7 +321,7 @@ void StarlingOffboard::TimerCallback() {
         stop_vel_[2] = -1.0 * err_z;
         ClampVelocity(stop_vel_);
         PubTrajSetpointVel(stop_vel_);
-        RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
+        //RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
       }
 
       else {
@@ -466,38 +489,42 @@ void StarlingOffboard::UpdateVel(
 void StarlingOffboard::VehicleLocalPosCallback(
     const px4_msgs::msg::VehicleLocalPosition::SharedPtr
         pos_msg) {
-  pos_msg_ = *pos_msg;
-  const Eigen::Vector4d pos_vec(pos_msg->x, pos_msg->y, pos_msg->z, 1.0);
 
-  const Eigen::Vector4d vehicle_mission_position =
-      TransformVec(pos_vec, T_ned_miss_);
-  curr_position_ = vehicle_mission_position;
-  if (path_.poses.size() == 0) {
-    if (std::abs(curr_position_[0]) < 1. && std::abs(curr_position_[1]) < 1.) {
-      return;
+  // Only publish the pose once the drone is armed and transforms have been set
+  if (state_ >= State::ARMING) {
+    pos_msg_ = *pos_msg;
+    const Eigen::Vector4d pos_vec(pos_msg->x, pos_msg->y, pos_msg->z, 1.0);
+
+    const Eigen::Vector4d vehicle_mission_position =
+        TransformVec(pos_vec, T_ned_miss_);
+    curr_position_ = vehicle_mission_position;
+    if (path_.poses.size() == 0) {
+      if (std::abs(curr_position_[0]) < 1. && std::abs(curr_position_[1]) < 1.) {
+        return;
+      }
+      if (curr_position_[0] != 0 && curr_position_[1] != 0 &&
+          curr_position_[2] != 0) {
+        geometry_msgs::msg::PoseStamped gnn_pose;
+        gnn_pose.header.stamp = this->get_clock()->now();
+        gnn_pose.header.frame_id = "map";
+        gnn_pose.pose.position.x = vehicle_mission_position[0];
+        gnn_pose.pose.position.y = vehicle_mission_position[1];
+        gnn_pose.pose.position.z = vehicle_mission_position[2];
+        path_.poses.push_back(gnn_pose);
+      }
     }
-    if (curr_position_[0] != 0 && curr_position_[1] != 0 &&
-        curr_position_[2] != 0) {
-      geometry_msgs::msg::PoseStamped gnn_pose;
-      gnn_pose.header.stamp = this->get_clock()->now();
-      gnn_pose.header.frame_id = "map";
-      gnn_pose.pose.position.x = vehicle_mission_position[0];
-      gnn_pose.pose.position.y = vehicle_mission_position[1];
-      gnn_pose.pose.position.z = vehicle_mission_position[2];
-      path_.poses.push_back(gnn_pose);
-    }
+
+    // Publish the current pose
+    geometry_msgs::msg::PoseStamped gnn_pose;
+    gnn_pose.header.stamp = this->get_clock()->now();
+    gnn_pose.header.frame_id = "map";
+
+    // TODO
+    gnn_pose.pose.position.x = vehicle_mission_position[0];
+    gnn_pose.pose.position.y = vehicle_mission_position[1];
+    gnn_pose.pose.position.z = vehicle_mission_position[2];
+    pubs_.pose->publish(gnn_pose);
   }
-
-  // Publish the current pose
-  geometry_msgs::msg::PoseStamped gnn_pose;
-  gnn_pose.header.stamp = this->get_clock()->now();
-  gnn_pose.header.frame_id = "map";
-
-  // TODO
-  gnn_pose.pose.position.x = vehicle_mission_position[0];
-  gnn_pose.pose.position.y = vehicle_mission_position[1];
-  gnn_pose.pose.position.z = vehicle_mission_position[2];
-  pubs_.pose->publish(gnn_pose);
 }
 
 /**

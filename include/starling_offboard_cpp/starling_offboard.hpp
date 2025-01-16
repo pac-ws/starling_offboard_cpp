@@ -23,6 +23,7 @@
 #include <sstream>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <string>
 #include <string_view>
 
@@ -32,13 +33,15 @@ using namespace px4_msgs::msg;
 
 class StarlingOffboard : public rclcpp::Node {
  public:
-  enum class State { IDLE, ARMING, TAKEOFF, MISSION, LANDING };
+  enum class State { IDLE, ARMING, ARMED, TAKEOFF, MISSION, LANDING };
   static std::string_view StateToString(StarlingOffboard::State state) {
     switch (state) {
       case StarlingOffboard::State::IDLE:
         return "IDLE";
       case StarlingOffboard::State::ARMING:
         return "ARMING";
+      case StarlingOffboard::State::ARMED:
+        return "ARMED";
       case StarlingOffboard::State::TAKEOFF:
         return "TAKEOFF";
       case StarlingOffboard::State::MISSION:
@@ -122,6 +125,7 @@ class StarlingOffboard : public rclcpp::Node {
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
         vehicle_local_pos;
     rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
+    rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr status_pac;
   };
   Subscriptions subs_;
 
