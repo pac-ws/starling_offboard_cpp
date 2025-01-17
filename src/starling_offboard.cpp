@@ -99,7 +99,7 @@ void StarlingOffboard::InitializeSubscribers() {
   subs_.status_pac = this->create_subscription<std_msgs::msg::Int32>(
           "/pac_gcs/status_pac", qos_,
           [this](const std_msgs::msg::Int32::UniquePtr msg) {
-            if (msg->data == 4) {
+            if (msg->data == 3) {
               takeoff_cmd_received_ = true;
             }
           });
@@ -217,6 +217,7 @@ void StarlingOffboard::TimerCallback() {
         takeoff_pos_ned_ = TransformVec(takeoff_pos_, T_miss_ned_);
 
         RCLCPP_INFO(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
+        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
         RCLCPP_INFO(this->get_logger(), "Takeoff pos (miss): %f, %f, %f",
                     takeoff_pos_[0], takeoff_pos_[1], takeoff_pos_[2]);
         RCLCPP_INFO(this->get_logger(), "Takeoff pos (ned): %f, %f, %f",
@@ -235,9 +236,16 @@ void StarlingOffboard::TimerCallback() {
         assert(TransformVec(takeoff_pos_ned_, T_ned_miss_)
                    .isApprox(takeoff_pos_, 0.1));
 
-        state_ = State::ARMING;
-        std::cout << "State: " << state_ << std::endl;
+        state_ = State::PREFLT;
+        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       }
+      break;
+
+    case State::PREFLT:
+      if (takeoff_cmd_received_) {
+        state_ = State::ARMING;
+        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+      } 
       break;
 
     case State::ARMING:
@@ -250,9 +258,8 @@ void StarlingOffboard::TimerCallback() {
 
         if (arming_state_ == 2) {
           RCLCPP_INFO(this->get_logger(), "Vehicle armed");
-          //state_ = State::TAKEOFF;
-          state_ = State::ARMED;
-          std::cout << "State: " << state_ << std::endl;
+          state_ = State::TAKEOFF;
+          RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
         } else {
           RCLCPP_INFO(this->get_logger(), "Vehicle not armed");
           // Retry
@@ -262,29 +269,14 @@ void StarlingOffboard::TimerCallback() {
 
       // Send 10 setpoints before attempting to Arm
       // offboard_control_mode needs to be paired with trajectory_setpoint
-      PubOffboardControlMode(true, false);
-      //PubTrajSetpointPos(takeoff_pos_ned_);
-
-      // Do not attempt to liftoff yet
-      PubTrajSetpointPos(Eigen::Vector4d(0.0, 0.0, 0.0, 1.0));
+      PubOffboardControlMode(ControlMode::POS);
+      PubTrajSetpointPos(takeoff_pos_ned_);
 
       // stop the counter after reaching 11
       if (offboard_setpoint_counter_ < 11) {
         offboard_setpoint_counter_++;
       }
       break;
-
-    case State::ARMED:
-      // Await takeoff command from GCS, otherwise hold on the ground
-      if (takeoff_cmd_received_) {
-        state_ = State::TAKEOFF;
-        std::cout << "State: " << state_ << std::endl;
-      } else {
-        PubOffboardControlMode(true, false);
-        PubTrajSetpointPos(Eigen::Vector4d(0.0, 0.0, 0.0, 1.0));
-      }
-      break;
-
 
     case State::LANDING:
     case State::TAKEOFF:
@@ -293,15 +285,15 @@ void StarlingOffboard::TimerCallback() {
       takeoff_completed_ = this->HasReachedPos(takeoff_pos_ned_);
 
       if (takeoff_completed_) {
-        PubOffboardControlMode(true, false);
+        PubOffboardControlMode(ControlMode::VEL);
         PubTrajSetpointVel(stop_vel_);
         state_ = State::MISSION;
-        std::cout << "State: " << state_ << std::endl;
+        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
         RCLCPP_INFO(this->get_logger(),
                     "Takeoff complete -- reached setpoint within TOL");
       } else {
         // offboard_control_mode needs to be paired with trajectory_setpoint
-        PubOffboardControlMode(true, false);
+        PubOffboardControlMode(ControlMode::POS);
         PubTrajSetpointPos(takeoff_pos_ned_);
       }
       break;
@@ -311,7 +303,7 @@ void StarlingOffboard::TimerCallback() {
 
       // offboard_control_mode needs to be paired with trajectory_setpoint
       // If the message rate drops bellow 2Hz, the drone exits offboard control
-      PubOffboardControlMode(false, true);
+      PubOffboardControlMode(ControlMode::VEL);
 
       rclcpp::Time time_now = clock_->now();
 
@@ -417,11 +409,21 @@ void StarlingOffboard::Disarm() {
  * @brief Publish the offboard control mode.
  *        For this example, only position and altitude controls are active.
  */
-void StarlingOffboard::PubOffboardControlMode(const bool is_pos,
-                                              const bool is_vel) {
+void StarlingOffboard::PubOffboardControlMode(const StarlingOffboard::ControlMode mode) {
   px4_msgs::msg::OffboardControlMode msg{};
-  msg.position = is_pos;
-  msg.velocity = is_vel;
+
+  if (mode == ControlMode::POS) {
+    msg.position = true;
+    msg.velocity = false;
+    RCPPL_INFO(this->get_logger(), "Position control mode");
+  } else if (mode == ControlMode::VEL) {
+    msg.position = false;
+    msg.velocity = true;
+    RCPPL_INFO(this->get_logger(), "Velocity control mode");
+  } else {
+    msg.position = false;
+    msg.velocity = false;
+  }
   msg.acceleration = false;
   msg.attitude = false;
   msg.body_rate = false;

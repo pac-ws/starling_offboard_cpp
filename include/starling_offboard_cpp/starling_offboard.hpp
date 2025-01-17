@@ -33,15 +33,16 @@ using namespace px4_msgs::msg;
 
 class StarlingOffboard : public rclcpp::Node {
  public:
-  enum class State { IDLE, ARMING, ARMED, TAKEOFF, MISSION, LANDING };
-  static std::string_view StateToString(StarlingOffboard::State state) {
+  enum class ControlMode {POS, VEL};
+  enum class State { IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING };
+  static std::string StateToString(StarlingOffboard::State state) {
     switch (state) {
       case StarlingOffboard::State::IDLE:
         return "IDLE";
+      case StarlingOffboard::State::PREFLT:
+        return "PREFLT";
       case StarlingOffboard::State::ARMING:
         return "ARMING";
-      case StarlingOffboard::State::ARMED:
-        return "ARMED";
       case StarlingOffboard::State::TAKEOFF:
         return "TAKEOFF";
       case StarlingOffboard::State::MISSION:
@@ -163,7 +164,7 @@ class StarlingOffboard : public rclcpp::Node {
 
   void UpdateVel(const geometry_msgs::msg::TwistStamped::SharedPtr);
 
-  void PubOffboardControlMode(const bool is_pos, const bool is_vel);
+  void PubOffboardControlMode(const ControlMode mode);
   void PubTrajSetpointVel(const Eigen::Vector4d& target_vel);
   void PubTrajSetpointPos(const Eigen::Vector4d& target_pos);
 
