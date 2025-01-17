@@ -45,5 +45,3 @@ launch:
           value: '$(var position_tolerance)'
         - name: 'max_speed'
           value: '$(var max_speed)'
-        - name: 'yaw'
-          value: '$(var yaw)'
