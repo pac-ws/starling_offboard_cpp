@@ -20,6 +20,7 @@
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rcl_interfaces/srv/get_parameters.hpp>
 #include <sstream>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -74,7 +75,7 @@ class StarlingOffboard : public rclcpp::Node {
   double mission_origin_lat_;
   double heading_;
 
-  double yaw;
+  double yaw_;
 
   Eigen::Matrix<double, 4, 4> T_miss_ned_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_ned_miss_ = Eigen::Matrix4d::Identity();
@@ -148,8 +149,11 @@ class StarlingOffboard : public rclcpp::Node {
   }
 
   void GetNodeParameters();
+  void GetMissionOriginGPS();
+  void GetLaunchGPS();
   void InitializeSubscribers();
   void InitializePublishers();
+  void ComputeTransforms();
   void Arm();
   void Disarm();
   void TimerCallback();
