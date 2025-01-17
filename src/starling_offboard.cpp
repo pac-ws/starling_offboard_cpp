@@ -45,9 +45,6 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<double>("alt", 2.0);
   this->get_parameter("alt", params_.z_takeoff);
 
-  this->declare_parameter<double>("yaw", 2.4);
-  this->get_parameter("yaw", params_.yaw);
-
   this->declare_parameter<double>("max_speed", 2.0);
   this->get_parameter("max_speed", params_.max_speed);
 }

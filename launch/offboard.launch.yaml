@@ -12,9 +12,6 @@ launch:
       name: 'alt'
       default: '-1.0'
   - arg:
-      name: 'yaw'
-      default: '0.0'
-  - arg:
       name: 'x_takeoff'
       default: '1.0'
   - arg:

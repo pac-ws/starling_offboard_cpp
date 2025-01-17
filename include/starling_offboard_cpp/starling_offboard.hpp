@@ -112,7 +112,6 @@ class StarlingOffboard : public rclcpp::Node {
     double x_takeoff;
     double y_takeoff;
     double z_takeoff;
-    double yaw;
   };
   Params params_;
 
