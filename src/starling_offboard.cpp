@@ -2,6 +2,8 @@
 
 StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   GetNodeParameters();
+  GetMissionOriginGPS();
+  GetLaunchGPS();
   // QoS
   rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
   qos_ = rclcpp::QoS(
@@ -48,6 +50,125 @@ void StarlingOffboard::GetNodeParameters() {
   this->get_parameter("max_speed", params_.max_speed);
 }
 
+void StarlingOffboard::GetMissionOriginGPS() {
+  std::string service_name = "/pac_gcs/mission_origin_gps/get_parameters";
+  auto pac_gcs_parameters_client =
+      this->create_client<rcl_interfaces::srv::GetParameters>(service_name);
+  while (!pac_gcs_parameters_client->wait_for_service(1s)) {
+    if (!rclcpp::ok()) {
+      rclcpp::shutdown();
+    }
+  }
+  auto request =
+      std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
+  request->names = {"mission_origin_lat", "mission_origin_lon", "heading"};
+  while (!origin_gps_received_) {
+    auto result_future = pac_gcs_parameters_client->async_send_request(request);
+    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
+                                           result_future) !=
+        rclcpp::FutureReturnCode::SUCCESS) {
+      rclcpp::sleep_for(1s);
+      continue;
+    }
+    auto result = result_future.get();
+    if (result->values.size() == 0) {
+      rclcpp::sleep_for(1s);
+      continue;
+    }
+    mission_origin_lat_ = result->values[0].double_value;
+    mission_origin_lon_ = result->values[1].double_value;
+    heading_ = result->values[2].double_value;
+    origin_gps_received_ = true;
+  }
+}
+
+void StarlingOffboard::GetLaunchGPS() {
+  std::string service_name = "gps_fix/get_parameters";
+  auto homify_parameters_client =
+      this->create_client<rcl_interfaces::srv::GetParameters>(service_name);
+  while (!homify_parameters_client->wait_for_service(1s)) {
+    if (!rclcpp::ok()) {
+      rclcpp::shutdown();
+    }
+  }
+  while (!gps_received_) {
+    auto request =
+        std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
+    request->names = {"launch_gps"};
+    auto result_future = homify_parameters_client->async_send_request(request);
+    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
+                                           result_future) !=
+        rclcpp::FutureReturnCode::SUCCESS) {
+      rclcpp::sleep_for(1s);
+      continue;
+    }
+    auto result = result_future.get();
+    if (result->values.size() == 0) {
+      rclcpp::sleep_for(1s);
+      continue;
+    }
+    std::vector<double> launch_gps = result->values[0].double_array_value;
+    launch_gps_lat_ = launch_gps[0];
+    launch_gps_lon_ = launch_gps[1];
+    gps_received_ = true;
+  }
+}
+
+void StarlingOffboard::ComputeTransforms() {
+  // Compute the translation from the home position to the current (start
+  // up position)
+  double distance;
+  double azimuth_origin_to_target;
+  double azimuth_target_to_origin;
+
+  const GeographicLib::Geodesic geod = GeographicLib::Geodesic::WGS84();
+  geod.Inverse(mission_origin_lat_, mission_origin_lon_, launch_gps_lat_,
+               launch_gps_lon_, distance, azimuth_origin_to_target,
+               azimuth_target_to_origin);
+
+  // RCLCPP_INFO(this->get_logger(), "Distance to origin: %f", distance);
+  // RCLCPP_INFO(this->get_logger(), "Azimuth origin to target: %f",
+  //             azimuth_origin_to_target);
+  // RCLCPP_INFO(this->get_logger(), "Azimuth target to origin: %f",
+  //             azimuth_target_to_origin);
+
+  double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
+  double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
+  double z = 0.0;
+
+  Eigen::Matrix3d rot_mat_z =
+      Eigen::AngleAxisd(3. * M_PI / 2. - heading_, Eigen::Vector3d::UnitZ())
+          .toRotationMatrix();
+  Eigen::Matrix3d rot_mat_x =
+      Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+
+  Eigen::Matrix3d rot_mat = rot_mat_x * rot_mat_z;
+
+  T_ned_miss_.block<3, 3>(0, 0) = rot_mat;
+  T_miss_ned_.block<3, 3>(0, 0) = T_ned_miss_.block<3, 3>(0, 0).transpose();
+
+  Eigen::Vector3d translation = Eigen::Vector3d(x, y, z);
+  T_miss_ned_.block<3, 1>(0, 3) = -translation;
+
+  T_ned_miss_ = T_miss_ned_.inverse();
+
+  // Set the desired yaw to the current heading (avoid rotation during takeoff)
+  // Note the distinction between the mission frame heading received from the
+  // GCS and the local heading used here
+  yaw_ = pos_msg_.heading;
+
+  // Testing of the transformations
+  assert(
+      (T_miss_ned_ * T_ned_miss_).isApprox(Eigen::Matrix4d::Identity(), 0.001));
+
+  RCLCPP_INFO(this->get_logger(), "T_miss_ned:\n%s",
+              EigenMatToStr(T_miss_ned_).c_str());
+  RCLCPP_INFO(this->get_logger(), "T_ned_miss:\n%s",
+              EigenMatToStr(T_ned_miss_).c_str());
+
+  RCLCPP_INFO(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
+}
+
 void StarlingOffboard::InitializeSubscribers() {
   subs_.vehicle_status =
       this->create_subscription<px4_msgs::msg::VehicleStatus>(
@@ -66,24 +187,6 @@ void StarlingOffboard::InitializeSubscribers() {
         //       gps_received_ = true;
       });
 
-  subs_.mission_origin_gps =
-      this->create_subscription<geometry_msgs::msg::Point>(
-          "/pac_gcs/mission_origin_gps", qos_,
-          [this](const geometry_msgs::msg::Point::UniquePtr msg) {
-            mission_origin_lon_ = msg->x;
-            mission_origin_lat_ = msg->y;
-            heading_ = msg->z;
-            origin_gps_received_ = true;
-          });
-
-  subs_.launch_gps = this->create_subscription<geometry_msgs::msg::Point>(
-      "launch_gps", qos_,
-      [this](const geometry_msgs::msg::Point::UniquePtr msg) {
-        launch_gps_lat_ = msg->x;
-        launch_gps_lon_ = msg->y;
-        gps_received_ = true;
-      });
-
   // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
   subs_.cmd_vel = this->create_subscription<geometry_msgs::msg::TwistStamped>(
       "cmd_vel", qos_,
@@ -97,12 +200,12 @@ void StarlingOffboard::InitializeSubscribers() {
                     std::placeholders::_1));
 
   subs_.status_pac = this->create_subscription<std_msgs::msg::Int32>(
-          "/pac_gcs/status_pac", qos_,
-          [this](const std_msgs::msg::Int32::UniquePtr msg) {
-            if (msg->data == 4) {
-              takeoff_cmd_received_ = true;
-            }
-          });
+      "/pac_gcs/status_pac", qos_,
+      [this](const std_msgs::msg::Int32::UniquePtr msg) {
+        if (msg->data == 4) {
+          takeoff_cmd_received_ = true;
+        }
+      });
 }
 
 void StarlingOffboard::InitializePublishers() {
@@ -113,7 +216,7 @@ void StarlingOffboard::InitializePublishers() {
   qos_reliable.reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE);
 
   // High BW
-  //pubs_.nav_path =
+  // pubs_.nav_path =
   //    this->create_publisher<nav_msgs::msg::Path>("path", qos_reliable);
 
   pubs_.drone_status =
@@ -129,8 +232,9 @@ void StarlingOffboard::InitializePublishers() {
           "fmu/in/trajectory_setpoint", params_.buffer_size);
   timer_ = this->create_wall_timer(
       100ms, std::bind(&StarlingOffboard::TimerCallback, this));
-  //path_pub_timer_ = this->create_wall_timer(
-  //        1000ms, std::bind(&StarlingOffboard::PathPublisherTimerCallback, this));
+  // path_pub_timer_ = this->create_wall_timer(
+  //         1000ms, std::bind(&StarlingOffboard::PathPublisherTimerCallback,
+  //         this));
 }
 
 /**
@@ -144,103 +248,53 @@ void StarlingOffboard::TimerCallback() {
 
   // State Machine
   switch (state_) {
-    case State::IDLE:
+    case State::IDLE: {
+      // Global origin
+      RCLCPP_INFO(this->get_logger(), "Global origin");
+      RCLCPP_INFO(this->get_logger(), "lat: %.8f", mission_origin_lat_);
+      RCLCPP_INFO(this->get_logger(), "lon: %.8f", mission_origin_lon_);
+      RCLCPP_INFO(this->get_logger(), "heading: %.8f", heading_);
 
-      if (gps_received_ && origin_gps_received_) {
-        // Global origin
-        RCLCPP_INFO(this->get_logger(), "Global origin");
-        RCLCPP_INFO(this->get_logger(), "lat: %.8f", mission_origin_lat_);
-        RCLCPP_INFO(this->get_logger(), "lon: %.8f", mission_origin_lon_);
-        RCLCPP_INFO(this->get_logger(), "heading: %.8f", heading_);
+      // Global startup location
+      RCLCPP_INFO(this->get_logger(), "Global launch received");
+      RCLCPP_INFO(this->get_logger(), "lat: %.8f", launch_gps_lat_);
+      RCLCPP_INFO(this->get_logger(), "lon: %.8f", launch_gps_lon_);
 
-        // Global startup location
-        RCLCPP_INFO(this->get_logger(), "Global received");
-        RCLCPP_INFO(this->get_logger(), "lat: %.8f", launch_gps_lat_);
-        RCLCPP_INFO(this->get_logger(), "lon: %.8f", launch_gps_lon_);
+      ComputeTransforms();
 
-        // Compute the translation from the home position to the current (start
-        // up position)
-        double distance;
-        double azimuth_origin_to_target;
-        double azimuth_target_to_origin;
+      Eigen::Vector4d current_mission_pos =
+          TransformVec(Eigen::Vector4d(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0),
+                       T_ned_miss_);
+      RCLCPP_INFO(this->get_logger(), "Current mission pos: %f, %f, %f",
+                  current_mission_pos[0], current_mission_pos[1],
+                  current_mission_pos[2]);
 
-        const GeographicLib::Geodesic geod = GeographicLib::Geodesic::WGS84();
-        geod.Inverse(mission_origin_lat_, mission_origin_lon_, launch_gps_lat_,
-                     launch_gps_lon_, distance, azimuth_origin_to_target,
-                     azimuth_target_to_origin);
+      takeoff_pos_[0] = current_mission_pos[0];
+      takeoff_pos_[1] = current_mission_pos[1];
 
-        //RCLCPP_INFO(this->get_logger(), "Distance to origin: %f", distance);
-        //RCLCPP_INFO(this->get_logger(), "Azimuth origin to target: %f",
-        //            azimuth_origin_to_target);
-        //RCLCPP_INFO(this->get_logger(), "Azimuth target to origin: %f",
-        //            azimuth_target_to_origin);
+      takeoff_pos_ned_ = TransformVec(takeoff_pos_, T_miss_ned_);
 
-        double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
-        double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
-        double z = 0.0;
+      RCLCPP_INFO(this->get_logger(), "Takeoff pos (miss): %f, %f, %f",
+                  takeoff_pos_[0], takeoff_pos_[1], takeoff_pos_[2]);
+      RCLCPP_INFO(this->get_logger(), "Takeoff pos (ned): %f, %f, %f",
+                  takeoff_pos_ned_[0], takeoff_pos_ned_[1],
+                  takeoff_pos_ned_[2]);
 
-        Eigen::Matrix3d rot_mat_z = Eigen::AngleAxisd(3. * M_PI / 2. - heading_,
-                                                      Eigen::Vector3d::UnitZ())
-                                        .toRotationMatrix();
-        Eigen::Matrix3d rot_mat_x =
-            Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX())
-                .toRotationMatrix();
+      Eigen::Vector4d takeoff_pos_check =
+          TransformVec(takeoff_pos_ned_, T_ned_miss_);
+      RCLCPP_INFO(this->get_logger(), "Takeoff pos check: %f, %f, %f",
+                  takeoff_pos_check[0], takeoff_pos_check[1],
+                  takeoff_pos_check[2]);
 
-        Eigen::Matrix3d rot_mat = rot_mat_x * rot_mat_z;
+      assert(TransformVec(takeoff_pos_ned_, T_ned_miss_)
+                 .isApprox(takeoff_pos_, 0.1));
 
-        T_ned_miss_.block<3, 3>(0, 0) = rot_mat;
-        T_miss_ned_.block<3, 3>(0, 0) = T_ned_miss_.block<3, 3>(0, 0).transpose();
-
-        Eigen::Vector3d translation = Eigen::Vector3d(x, y, z);
-        T_miss_ned_.block<3, 1>(0, 3) = -translation;
-
-        T_ned_miss_ = T_miss_ned_.inverse();
-
-        // Set the desired yaw to the current heading (avoid rotation during takeoff)
-        // Note the distinction between the mission frame heading received from the GCS and the
-        // local heading used here
-        yaw = pos_msg_.heading;
-        
-        // Testing of the transformations
-        Eigen::Vector4d current_mission_pos = TransformVec(
-            Eigen::Vector4d(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0),
-            T_ned_miss_);
-        RCLCPP_INFO(this->get_logger(), "Current mission pos: %f, %f, %f",
-                    current_mission_pos[0], current_mission_pos[1],
-                    current_mission_pos[2]);
-
-        assert((T_miss_ned_ * T_ned_miss_)
-                   .isApprox(Eigen::Matrix4d::Identity(), 0.001));
-        takeoff_pos_[0] = current_mission_pos[0];
-        takeoff_pos_[1] = current_mission_pos[1];
-
-        takeoff_pos_ned_ = TransformVec(takeoff_pos_, T_miss_ned_);
-
-        RCLCPP_INFO(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
-        RCLCPP_INFO(this->get_logger(), "Takeoff pos (miss): %f, %f, %f",
-                    takeoff_pos_[0], takeoff_pos_[1], takeoff_pos_[2]);
-        RCLCPP_INFO(this->get_logger(), "Takeoff pos (ned): %f, %f, %f",
-                    takeoff_pos_ned_[0], takeoff_pos_ned_[1],
-                    takeoff_pos_ned_[2]);
-
-        Eigen::Vector4d takeoff_pos_check =
-            TransformVec(takeoff_pos_ned_, T_ned_miss_);
-        RCLCPP_INFO(this->get_logger(), "Takeoff pos check: %f, %f, %f",
-                    takeoff_pos_check[0], takeoff_pos_check[1],
-                    takeoff_pos_check[2]);
-
-        RCLCPP_INFO(this->get_logger(), "T_miss_ned:\n%s", EigenMatToStr(T_miss_ned_).c_str());
-        RCLCPP_INFO(this->get_logger(), "T_ned_miss:\n%s", EigenMatToStr(T_ned_miss_).c_str());
-
-        assert(TransformVec(takeoff_pos_ned_, T_ned_miss_)
-                   .isApprox(takeoff_pos_, 0.1));
-
-        state_ = State::ARMING;
-        std::cout << "State: " << state_ << std::endl;
-      }
+      state_ = State::ARMING;
+      std::cout << "State: " << state_ << std::endl;
       break;
+    }
 
-    case State::ARMING:
+    case State::ARMING: {
       if (offboard_setpoint_counter_ == 10) {
         // Change to Offboard mode after 10 setpoints
         this->PubVehicleCommand(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
@@ -250,7 +304,7 @@ void StarlingOffboard::TimerCallback() {
 
         if (arming_state_ == 2) {
           RCLCPP_INFO(this->get_logger(), "Vehicle armed");
-          //state_ = State::TAKEOFF;
+          // state_ = State::TAKEOFF;
           state_ = State::ARMED;
           std::cout << "State: " << state_ << std::endl;
         } else {
@@ -263,7 +317,7 @@ void StarlingOffboard::TimerCallback() {
       // Send 10 setpoints before attempting to Arm
       // offboard_control_mode needs to be paired with trajectory_setpoint
       PubOffboardControlMode(true, false);
-      //PubTrajSetpointPos(takeoff_pos_ned_);
+      // PubTrajSetpointPos(takeoff_pos_ned_);
 
       // Do not attempt to liftoff yet
       PubTrajSetpointPos(Eigen::Vector4d(0.0, 0.0, 0.0, 1.0));
@@ -273,8 +327,9 @@ void StarlingOffboard::TimerCallback() {
         offboard_setpoint_counter_++;
       }
       break;
+    }
 
-    case State::ARMED:
+    case State::ARMED: {
       // Await takeoff command from GCS, otherwise hold on the ground
       if (takeoff_cmd_received_) {
         state_ = State::TAKEOFF;
@@ -284,11 +339,12 @@ void StarlingOffboard::TimerCallback() {
         PubTrajSetpointPos(Eigen::Vector4d(0.0, 0.0, 0.0, 1.0));
       }
       break;
+    }
 
-
-    case State::LANDING:
-    case State::TAKEOFF:
-
+    case State::LANDING: {
+      break;
+    }
+    case State::TAKEOFF: {
       // error calculation
       takeoff_completed_ = this->HasReachedPos(takeoff_pos_ned_);
 
@@ -305,10 +361,10 @@ void StarlingOffboard::TimerCallback() {
         PubTrajSetpointPos(takeoff_pos_ned_);
       }
       break;
+    }
 
     // GNN, Square, etc..
-    case State::MISSION:
-
+    case State::MISSION: {
       // offboard_control_mode needs to be paired with trajectory_setpoint
       // If the message rate drops bellow 2Hz, the drone exits offboard control
       PubOffboardControlMode(false, true);
@@ -321,15 +377,19 @@ void StarlingOffboard::TimerCallback() {
         stop_vel_[2] = -1.0 * err_z;
         ClampVelocity(stop_vel_);
         PubTrajSetpointVel(stop_vel_);
-        //RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
+        // RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout;
+        // stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1],
+        // stop_vel_[2]);
       }
 
       else {
-        //RCLCPP_INFO(this->get_logger(), "NED Velocity (%f, %f, %f)", vel_ned_[0], vel_ned_[1], vel_ned_[2]);
+        // RCLCPP_INFO(this->get_logger(), "NED Velocity (%f, %f, %f)",
+        // vel_ned_[0], vel_ned_[1], vel_ned_[2]);
         PubTrajSetpointVel(vel_ned_);
         time_last_vel_update_ = time_now;
       }
       break;
+    }
   }
 }
 
@@ -437,9 +497,9 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
   msg.position = {std::nanf(""), std::nanf(""),
                   std::nanf("")};  // required for vel control in px4
   msg.velocity = {static_cast<float>(target_vel[0]),
-                 static_cast<float>(target_vel[1]),
-                 static_cast<float>(target_vel[2])};
-  msg.yaw = static_cast<float>(yaw);  // [-PI:PI]
+                  static_cast<float>(target_vel[1]),
+                  static_cast<float>(target_vel[2])};
+  msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
   pubs_.traj_setpoint->publish(msg);
 }
@@ -450,9 +510,9 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
 void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
   TrajectorySetpoint msg{};
   msg.position = {static_cast<float>(target_pos[0]),
-                 static_cast<float>(target_pos[1]),
-                 static_cast<float>(target_pos[2])};
-  msg.yaw = static_cast<float>(yaw);  // [-PI:PI]
+                  static_cast<float>(target_pos[1]),
+                  static_cast<float>(target_pos[2])};
+  msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
   pubs_.traj_setpoint->publish(msg);
 }
@@ -487,9 +547,7 @@ void StarlingOffboard::UpdateVel(
  * for visualization
  */
 void StarlingOffboard::VehicleLocalPosCallback(
-    const px4_msgs::msg::VehicleLocalPosition::SharedPtr
-        pos_msg) {
-
+    const px4_msgs::msg::VehicleLocalPosition::SharedPtr pos_msg) {
   // Only publish the pose once the drone is armed and transforms have been set
   if (state_ >= State::ARMING) {
     pos_msg_ = *pos_msg;
@@ -499,7 +557,8 @@ void StarlingOffboard::VehicleLocalPosCallback(
         TransformVec(pos_vec, T_ned_miss_);
     curr_position_ = vehicle_mission_position;
     if (path_.poses.size() == 0) {
-      if (std::abs(curr_position_[0]) < 1. && std::abs(curr_position_[1]) < 1.) {
+      if (std::abs(curr_position_[0]) < 1. &&
+          std::abs(curr_position_[1]) < 1.) {
         return;
       }
       if (curr_position_[0] != 0 && curr_position_[1] != 0 &&
@@ -552,7 +611,8 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
   msg.source_system = 1;
   msg.source_component = 1;
   msg.from_external = true;
-  msg.timestamp = static_cast<uint64_t>(this->get_clock()->now().nanoseconds() / 1000);
+  msg.timestamp =
+      static_cast<uint64_t>(this->get_clock()->now().nanoseconds() / 1000);
   pubs_.vehicle_command->publish(msg);
 }
 
