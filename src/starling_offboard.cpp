@@ -173,16 +173,6 @@ void StarlingOffboard::InitializeSubscribers() {
             arming_state_ = msg->arming_state;
           });
 
-  // Used if we need to bypass homify for whatever reason
-  subs_.vehicle_gps_pos = this->create_subscription<px4_msgs::msg::SensorGps>(
-      "fmu/out/vehicle_gps_position", qos_,
-      [this](const px4_msgs::msg::SensorGps::UniquePtr msg) {
-        gps_pos_msg_ = *msg;
-        //    launch_gps_lat_ = ConvertRawGPSToDegrees(gps_pos_msg_.lat);
-        //    launch_gps_lon_ = ConvertRawGPSToDegrees(gps_pos_msg_.lon);
-        //       gps_received_ = true;
-      });
-
   // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
   subs_.cmd_vel = this->create_subscription<geometry_msgs::msg::TwistStamped>(
       "cmd_vel", qos_,

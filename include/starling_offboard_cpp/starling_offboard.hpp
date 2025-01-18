@@ -125,7 +125,6 @@ class StarlingOffboard : public rclcpp::Node {
         vehicle_status;
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
         vehicle_local_pos;
-    rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
     rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr status_pac;
   };
   Subscriptions subs_;
