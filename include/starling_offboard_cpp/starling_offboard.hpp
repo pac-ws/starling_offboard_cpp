@@ -63,14 +63,27 @@ class StarlingOffboard : public rclcpp::Node {
       0;  //!< counter for the number of setpoints sent
   nav_msgs::msg::Path path_;
   uint8_t arming_state_;
-  bool takeoff_cmd_received_ = false;
+
+  // Mission Control
+  bool enable_ = false;
+  bool takeoff_ = false;
+  bool land_ = false;
+  std::shared_ptr<rclcpp::ParameterEventHandler> mission_control_PEH_ptr_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_enable_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_takeoff_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_land_;
+  rclcpp::SyncParametersClient::SharedPtr sync_parameters_client_;
+
   bool gps_received_ = false;
   bool origin_gps_received_ = false;
+
   bool takeoff_completed_ = false;
 
+  // GPS coordinates at the launch site
   double launch_gps_lat_;
   double launch_gps_lon_;
 
+  // GPS coordinates + heading of the mission origin (GCS)
   double mission_origin_lon_;
   double mission_origin_lat_;
   double heading_;
@@ -125,7 +138,6 @@ class StarlingOffboard : public rclcpp::Node {
         vehicle_status;
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
         vehicle_local_pos;
-    rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr status_pac;
   };
   Subscriptions subs_;
 
@@ -147,6 +159,7 @@ class StarlingOffboard : public rclcpp::Node {
   }
 
   void GetNodeParameters();
+  void GetMissionControl();
   void GetMissionOriginGPS();
   void GetLaunchGPS();
   void InitializeSubscribers();
