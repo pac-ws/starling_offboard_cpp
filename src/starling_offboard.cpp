@@ -514,8 +514,9 @@ void StarlingOffboard::PubOffboardControlMode(const StarlingOffboard::ControlMod
   msg.attitude = false;
   msg.body_rate = false;
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (enable_)
-      pubs_.offboard_control_mode->publish(msg);
+  if (enable_) {
+    pubs_.offboard_control_mode->publish(msg);
+  }
 }
 
 /**
@@ -530,8 +531,9 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
                   static_cast<float>(target_vel[2])};
   msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (enable_)
-      pubs_.traj_setpoint->publish(msg);
+  if (enable_) {
+    pubs_.traj_setpoint->publish(msg);
+  }
 }
 
 /**
@@ -544,8 +546,9 @@ void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
                   static_cast<float>(target_pos[2])};
   msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (enable_)
-      pubs_.traj_setpoint->publish(msg);
+  if (enable_) {
+    pubs_.traj_setpoint->publish(msg);
+  }
 }
 
 /**
