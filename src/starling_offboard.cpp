@@ -1,6 +1,7 @@
 #include "starling_offboard_cpp/starling_offboard.hpp"
 
 StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
+  time_last_vel_update_ = this->get_clock()->now();
   GetNodeParameters();
   GetMissionControl();
   GetMissionOriginGPS();
@@ -406,7 +407,6 @@ void StarlingOffboard::TimerCallback() {
         // RCLCPP_INFO(this->get_logger(), "NED Velocity (%f, %f, %f)",
         // vel_ned_[0], vel_ned_[1], vel_ned_[2]);
         PubTrajSetpointVel(vel_ned_);
-        time_last_vel_update_ = time_now;
       }
       break;
     }
