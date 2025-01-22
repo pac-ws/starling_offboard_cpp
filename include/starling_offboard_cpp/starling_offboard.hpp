@@ -25,6 +25,7 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/int32.hpp>
+#include <std_msgs/msg/int32_multi_array.hpp>
 #include <string>
 #include <string_view>
 
@@ -138,6 +139,8 @@ class StarlingOffboard : public rclcpp::Node {
         vehicle_status;
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
         vehicle_local_pos;
+    rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
+        mission_control;
   };
   Subscriptions subs_;
 

@@ -4,8 +4,8 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   clock_ = std::make_shared<rclcpp::Clock>();
   time_last_vel_update_ = clock_->now();
   GetNodeParameters();
-  GetMissionControl();
-  GetMissionOriginGPS();
+  //GetMissionControl();
+  //GetMissionOriginGPS();
   GetLaunchGPS();
   // QoS
   rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
@@ -15,7 +15,6 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
 
   InitializeSubscribers();
   InitializePublishers();
-
 
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff, 1.0;
 
@@ -234,6 +233,26 @@ void StarlingOffboard::InitializeSubscribers() {
           "fmu/out/vehicle_local_position", qos_,
           std::bind(&StarlingOffboard::VehicleLocalPosCallback, this,
                     std::placeholders::_1));
+  subs_.mission_origin_gps = 
+      this->create_subscription<geometry_msgs::msg::Point>(
+              "/pac_gcs/mission_origin_gps", qos_,
+              [this](const geometry_msgs::msg::Point::SharedPtr msg) {
+                mission_origin_lon_ = msg->x;
+                mission_origin_lat_ = msg->y;
+                heading_ = msg->z;
+                origin_gps_received_ = true;
+              });
+  subs_.mission_control = 
+      this->create_subscription<std_msgs::msg::Int32MultiArray>(
+              "/mission_control", 10,
+              [this](const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
+                if (msg->data.size() == 4) {
+                  // hardware_enable, enable, takeoff, land
+                  enable_ = msg->data[1];
+                  takeoff_ = msg->data[2];
+                  land_ = msg->data[3];
+                }
+              });
 
 }
 
@@ -276,11 +295,18 @@ void StarlingOffboard::TimerCallback() {
   state_msg.data = StateToString(state_);
   pubs_.drone_status->publish(state_msg);
 
-
-
   // State Machine
   switch (state_) {
     case State::IDLE: {
+      // Mission origin has been converted to a topic
+      // Homify launch GPS is still a parameter
+      // Can't get to this point without having received it
+      if (!origin_gps_received_) {
+        RCLCPP_WARN_ONCE(this->get_logger(), "Waiting for mission origin GPS...");
+        break;
+      }
+      RCLCPP_INFO(this->get_logger(), "Mission origin GPS received.");
+
       // Global origin
       RCLCPP_INFO(this->get_logger(), "Global origin");
       RCLCPP_INFO(this->get_logger(), "lat: %.8f", mission_origin_lat_);
