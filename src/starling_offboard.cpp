@@ -1,7 +1,8 @@
 #include "starling_offboard_cpp/starling_offboard.hpp"
 
 StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
-  time_last_vel_update_ = this->get_clock()->now();
+  clock_ = std::make_shared<rclcpp::Clock>();
+  time_last_vel_update_ = clock_->now();
   GetNodeParameters();
   GetMissionControl();
   GetMissionOriginGPS();
@@ -15,7 +16,6 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   InitializeSubscribers();
   InitializePublishers();
 
-  clock_ = std::make_shared<rclcpp::Clock>();
 
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff, 1.0;
 
