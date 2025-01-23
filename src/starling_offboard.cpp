@@ -3,18 +3,21 @@
 StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   clock_ = std::make_shared<rclcpp::Clock>();
   time_last_vel_update_ = clock_->now();
-  GetNodeParameters();
-  GetMissionControl();
-  GetMissionOriginGPS();
-  GetLaunchGPS();
+  
   // QoS
   rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
   qos_ = rclcpp::QoS(
       rclcpp::QoSInitialization(qos_profile.history, params_.buffer_size),
       qos_profile);
 
+  GetNodeParameters();
+
   InitializeSubscribers();
   InitializePublishers();
+
+  GetMissionControl();
+  GetMissionOriginGPS();
+  GetLaunchGPS();
 
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff, 1.0;
 
