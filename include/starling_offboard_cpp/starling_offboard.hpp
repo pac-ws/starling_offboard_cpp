@@ -77,6 +77,7 @@ class StarlingOffboard : public rclcpp::Node {
 
   bool gps_received_ = false;
   bool origin_gps_received_ = false;
+  bool mission_control_received_ = false;
 
   bool takeoff_completed_ = false;
 
