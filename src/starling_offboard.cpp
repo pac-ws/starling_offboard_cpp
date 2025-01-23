@@ -4,20 +4,21 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   clock_ = std::make_shared<rclcpp::Clock>();
   time_last_vel_update_ = clock_->now();
   
+  GetNodeParameters();
+  
   // QoS
   rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
   qos_ = rclcpp::QoS(
       rclcpp::QoSInitialization(qos_profile.history, params_.buffer_size),
       qos_profile);
 
-  GetNodeParameters();
+  GetLaunchGPS();
 
   InitializeSubscribers();
   InitializePublishers();
 
-  GetMissionControl();
-  GetMissionOriginGPS();
-  GetLaunchGPS();
+  //GetMissionControl();
+  //GetMissionOriginGPS();
 
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff, 1.0;
 
@@ -239,6 +240,17 @@ void StarlingOffboard::TimerCallback() {
       // Mission origin has been converted to a topic
       // Homify launch GPS is still a parameter
       // Can't get to this point without having received it
+      if (!mission_control_received_) {
+          RCLCPP_WARN_ONCE(this->get_logger(), "Waiting for mission control topic...");
+          break;
+      }
+      RCLCPP_INFO(this->get_logger(), "Mission control received.");
+
+      if (!origin_gps_received_) {
+          RCLCPP_WARN_ONCE(this->get_logger(), "Waiting for mission origin GPS...");
+          break;
+      }
+      RCLCPP_INFO(this->get_logger(), "Mission origin GPS received.");
 
       // Global origin
       RCLCPP_INFO(this->get_logger(), "Global origin");
