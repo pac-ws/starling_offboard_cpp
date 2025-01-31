@@ -20,7 +20,10 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   //GetMissionControl();
   //GetMissionOriginGPS();
 
-  takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff, 1.0;
+  // z_takeoff is the altitude set by the user
+  // alt_offset_'s value is produced by homify to account for altitude offsets on the ground.
+  RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
+  takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
 
   // TODO Revert before real flight
   // 10Hz Timer
@@ -163,6 +166,8 @@ void StarlingOffboard::GetLaunchGPS() {
     launch_gps_lat_ = launch_gps[0];
     launch_gps_lon_ = launch_gps[1];
     yaw_ = launch_gps[2];
+    // Flip z-axis to match mission frame
+    alt_offset_ =  std::max(-launch_gps[3], 0.0);
     gps_received_ = true;
   }
 }

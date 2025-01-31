@@ -91,6 +91,7 @@ class StarlingOffboard : public rclcpp::Node {
   double heading_;
 
   double yaw_;
+  double alt_offset_;
 
   Eigen::Matrix<double, 4, 4> T_miss_ned_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_ned_miss_ = Eigen::Matrix4d::Identity();
