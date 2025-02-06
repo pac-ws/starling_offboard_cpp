@@ -25,6 +25,8 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
 
+  land_vel_[2] = params_.land_vel_z;
+
   // TODO Revert before real flight
   // 10Hz Timer
 }
@@ -53,6 +55,9 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<double>("max_speed", 2.0);
   this->get_parameter("max_speed", params_.max_speed);
+
+  this->declare_parameter<double>("land_vel_z", 0.5);
+  this->get_parameter("land_vel_z", params_.land_vel_z);
 }
 
 void StarlingOffboard::GetMissionControl(){
@@ -363,6 +368,9 @@ void StarlingOffboard::TimerCallback() {
       assert(TransformVec(takeoff_pos_ned_, T_ned_miss_)
                  .isApprox(takeoff_pos_, 0.1));
 
+      start_pos_ned_[0] = takeoff_pos_ned_[0];
+      start_pos_ned_[1] = takeoff_pos_ned_[1];
+
       state_ = State::PREFLT;
       RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       break;
@@ -409,7 +417,6 @@ void StarlingOffboard::TimerCallback() {
       break;
     
 
-    case State::LANDING:
     case State::TAKEOFF:
       // error calculation
       takeoff_completed_ = this->HasReachedPos(takeoff_pos_ned_);
@@ -430,6 +437,13 @@ void StarlingOffboard::TimerCallback() {
     
     // GNN, Square, etc..
     case State::MISSION: {
+      if (land_) {
+        state_ = State::LANDING_SEQ_HORIZONTAL;
+        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+        RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
+        break;
+      }
+
       // offboard_control_mode needs to be paired with trajectory_setpoint
       // If the message rate drops bellow 2Hz, the drone exits offboard control
       PubOffboardControlMode(ControlMode::VEL);
@@ -452,6 +466,46 @@ void StarlingOffboard::TimerCallback() {
       }
       break;
     }
+
+    case State::LANDING_SEQ_HORIZONTAL:
+      reached_land_pos_h_ = this->HasReachedPos(takeoff_pos_ned_);
+      if (reached_land_pos_h_) {
+        state_ = State::LANDING_SEQ_VERTICAL;
+        RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
+        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+      }
+      else{
+        // Lateral move to the takeoff position
+        PubOffboardControlMode(ControlMode::POS);
+        PubTrajSetpointPos(takeoff_pos_ned_);
+      }
+      break;
+
+    case State::LANDING_SEQ_VERTICAL:
+      // Check both position and velocity to ensure the drone has landed
+      reached_land_pos_v_ = this->HasReachedPos(start_pos_ned_);
+      reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
+
+      if (reached_land_pos_v_ && reached_land_stationary_v_) {
+        state_ =  State::DISARM;
+        RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence finished");
+        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+      }
+      else{
+        PubOffboardControlMode(ControlMode::VEL);
+        PubTrajSetpointPos(land_vel_);
+      }
+      break;
+
+    case State::DISARM:
+      if (arming_state_ == 2) {
+        this->Disarm();
+      }
+      else{
+          RCLCPP_WARN_ONCE(this->get_logger(), "Vehicle disarmed");
+      }
+      // Need to restart the drone after landing so just spin in this state.
+      break;
   }
 }
 
@@ -532,7 +586,7 @@ void StarlingOffboard::Arm() {
 void StarlingOffboard::Disarm() {
   PubVehicleCommand(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0, 0.0,
                     0.0, 0.0, 0.0);
-  RCLCPP_INFO(this->get_logger(), "Disarm command send");
+  RCLCPP_INFO_ONCE(this->get_logger(), "Disarm command send");
 }
 
 /**

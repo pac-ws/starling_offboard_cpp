@@ -36,7 +36,7 @@ using namespace px4_msgs::msg;
 class StarlingOffboard : public rclcpp::Node {
  public:
   enum class ControlMode {POS, VEL};
-  enum class State { IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING };
+  enum class State { IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING_SEQ_HORIZONTAL, LANDING_SEQ_VERTICAL, DISARM };
   static std::string StateToString(StarlingOffboard::State state) {
     switch (state) {
       case StarlingOffboard::State::IDLE:
@@ -49,8 +49,12 @@ class StarlingOffboard : public rclcpp::Node {
         return "TAKEOFF";
       case StarlingOffboard::State::MISSION:
         return "MISSION";
-      case StarlingOffboard::State::LANDING:
-        return "LANDING";
+      case StarlingOffboard::State::LANDING_SEQ_HORIZONTAL:
+        return "LANDING_SEQ_HORIZONTAL";
+      case StarlingOffboard::State::LANDING_SEQ_VERTICAL:
+        return "LANDING_SEQ_VERTICAL";
+      case StarlingOffboard::State::DISARM:
+        return "DISARM";
       default:
         return "INVALID";
     }
@@ -80,6 +84,9 @@ class StarlingOffboard : public rclcpp::Node {
   bool mission_control_received_ = false;
 
   bool takeoff_completed_ = false;
+  bool reached_land_pos_h_ = false;
+  bool reached_land_pos_v_ = false;
+  bool reached_land_stationary_v_ = false;
 
   // GPS coordinates at the launch site
   double launch_gps_lat_;
@@ -102,6 +109,8 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Vector4d vel_ned_ = Eigen::Vector4d::Unit(3);
   // Used to stop the drone when it reaches the waypoint
   Eigen::Vector4d stop_vel_ = Eigen::Vector4d::Unit(3);
+  Eigen::Vector4d land_vel_ = Eigen::Vector4d::Unit(3);
+  Eigen::Vector4d start_pos_ned_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d takeoff_pos_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d takeoff_pos_ned_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d curr_position_ = Eigen::Vector4d::Unit(3);
@@ -128,6 +137,7 @@ class StarlingOffboard : public rclcpp::Node {
     double x_takeoff;
     double y_takeoff;
     double z_takeoff;
+    double land_vel_z;
   };
   Params params_;
 
