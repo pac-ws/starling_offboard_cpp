@@ -73,6 +73,9 @@ class StarlingOffboard : public rclcpp::Node {
   bool enable_ = false;
   bool takeoff_ = false;
   bool land_ = false;
+  bool geofence_ = false;
+  bool breach_ = false;
+
   std::shared_ptr<rclcpp::ParameterEventHandler> mission_control_PEH_ptr_;
   rclcpp::ParameterCallbackHandle::SharedPtr handle_enable_;
   rclcpp::ParameterCallbackHandle::SharedPtr handle_takeoff_;
@@ -134,10 +137,15 @@ class StarlingOffboard : public rclcpp::Node {
     double position_tolerance = 1.;  // waypoint position tolerance in meters
     double env_scale_factor = 1.0;
     double max_speed = 2.0;
+    double kP = 1.0;
     double x_takeoff;
     double y_takeoff;
     double z_takeoff;
     double land_vel_z;
+    double fence_x_min = -10.0;
+    double fence_x_max = 50.0;
+    double fence_y_min = -10.0;
+    double fence_y_max = 50.0;
   };
   Params params_;
 
@@ -182,6 +190,7 @@ class StarlingOffboard : public rclcpp::Node {
   void ComputeTransforms();
   void Arm();
   void Disarm();
+  void GeofenceCheck();
   void TimerCallback();
   void PathPublisherTimerCallback();
   bool HasReachedPos(const Eigen::Vector4d& target_pos);

@@ -9,6 +9,9 @@ launch:
       name: 'max_speed'
       default: '2.0'
   - arg:
+      name: 'kP'
+      default: '1.0'
+  - arg:
       name: 'alt'
       default: '-1.0'
   - arg:
@@ -45,3 +48,5 @@ launch:
           value: '$(var position_tolerance)'
         - name: 'max_speed'
           value: '$(var max_speed)'
+        - name: 'kP'
+          value: '$(var kP)'

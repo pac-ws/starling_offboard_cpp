@@ -56,8 +56,23 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<double>("max_speed", 2.0);
   this->get_parameter("max_speed", params_.max_speed);
 
+  this->declare_parameter<double>("kP", 1.0);
+  this->get_parameter("kP", params_.kP);
+
   this->declare_parameter<double>("land_vel_z", 0.5);
   this->get_parameter("land_vel_z", params_.land_vel_z);
+
+  this->declare_parameter<double>("fence_x_min", -10.0);
+  this->get_parameter("fence_x_min", params_.fence_x_min);
+
+  this->declare_parameter<double>("fence_x_max", 50.0);
+  this->get_parameter("fence_x_max", params_.fence_x_max);
+
+  this->declare_parameter<double>("fence_y_min", -10.0);
+  this->get_parameter("fence_y_min", params_.fence_y_min);
+
+  this->declare_parameter<double>("fence_y_max", 50.0);
+  this->get_parameter("fence_y_max", params_.fence_y_max);
 }
 
 void StarlingOffboard::GetMissionControl(){
@@ -261,10 +276,12 @@ void StarlingOffboard::InitializeSubscribers() {
               "/mission_control", 10,
               [this](const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
                 if (msg->data.size() == 4) {
-                  // hardware_enable, enable, takeoff, land
+                  // hardware_enable, enable, takeoff, land, geofence
                   enable_ = msg->data[1];
                   takeoff_ = msg->data[2];
                   land_ = msg->data[3];
+                  // Disable manual geofence for now
+                  //geofence_ = msg->data[4];
                   mission_control_received_ = true;
                 }
               });
@@ -309,6 +326,9 @@ void StarlingOffboard::TimerCallback() {
   auto state_msg = std_msgs::msg::String();
   state_msg.data = StateToString(state_);
   pubs_.drone_status->publish(state_msg);
+
+  // Geofence check (TODO-action. will only warn for now)
+  GeofenceCheck();
 
   // State Machine
   switch (state_) {
@@ -590,6 +610,36 @@ void StarlingOffboard::Disarm() {
 }
 
 /**
+ * @brief Check for a geofence violation
+ */
+void StarlingOffboard::GeofenceCheck() {
+  if (geofence_) {
+    const Eigen::Vector4d pos_vec(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0);
+    const Eigen::Vector4d vehicle_mission_position =
+        TransformVec(pos_vec, T_ned_miss_);
+
+    if (vehicle_mission_position[0] < params_.fence_x_min ||
+        vehicle_mission_position[0] > params_.fence_x_max ||
+        vehicle_mission_position[1] < params_.fence_y_min ||
+        vehicle_mission_position[1] > params_.fence_y_max) {
+        
+      // Warn on the first breach until breach is reset
+      if (!breach_) {
+        RCLCPP_WARN(this->get_logger(), "Geofence breach detected.");
+      }
+      breach_ = true;
+    }
+    else{
+        breach_ = false;
+    }
+  }
+  // In case Geofence is turned off mid-flight
+  else{
+    breach_ = false;
+  }
+}
+
+/**
  * @brief Publish the offboard control mode.
  *        For this example, only position and altitude controls are active.
  */
@@ -627,7 +677,7 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
                   static_cast<float>(target_vel[2])};
   msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (enable_) {
+  if (enable_ && !breach_) {
     pubs_.traj_setpoint->publish(msg);
   }
 }
