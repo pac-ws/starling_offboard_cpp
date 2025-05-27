@@ -391,6 +391,8 @@ void StarlingOffboard::TimerCallback() {
       start_pos_ned_[0] = takeoff_pos_ned_[0];
       start_pos_ned_[1] = takeoff_pos_ned_[1];
 
+      RCLCPP_WARN_ONCE(this->get_logger(), "kP: %f", params_.kP);
+
       state_ = State::PREFLT;
       RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       break;
