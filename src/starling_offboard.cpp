@@ -275,7 +275,7 @@ void StarlingOffboard::InitializeSubscribers() {
       this->create_subscription<std_msgs::msg::Int32MultiArray>(
               "/mission_control", 10,
               [this](const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
-                if (msg->data.size() == 4) {
+                if (msg->data.size() == 5) {
                   // hardware_enable, enable, takeoff, land, geofence
                   enable_ = msg->data[1];
                   takeoff_ = msg->data[2];
