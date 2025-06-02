@@ -281,7 +281,7 @@ void StarlingOffboard::InitializeSubscribers() {
                   takeoff_ = msg->data[2];
                   land_ = msg->data[3];
                   // Disable manual geofence for now
-                  //geofence_ = msg->data[4];
+                  geofence_ = msg->data[4];
                   mission_control_received_ = true;
                 }
               });
@@ -327,7 +327,7 @@ void StarlingOffboard::TimerCallback() {
   state_msg.data = StateToString(state_);
   pubs_.drone_status->publish(state_msg);
 
-  // Geofence check (TODO-action. will only warn for now)
+  // Geofence check
   GeofenceCheck();
 
   // State Machine
