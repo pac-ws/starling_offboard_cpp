@@ -5,6 +5,7 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   time_last_vel_update_ = clock_->now();
   
   GetNodeParameters();
+  InitializeGeofence();
   
   // QoS
   rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
@@ -41,7 +42,7 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<double>("position_tolerance", 1.0);
   this->get_parameter("position_tolerance", params_.position_tolerance);
 
-  this->declare_parameter<double>("env_scale_factor", 1.0);
+  this->declare_parameter<double>("env_scale_factor", 50.0);
   this->get_parameter("env_scale_factor", params_.env_scale_factor);
 
   this->declare_parameter<double>("x_takeoff", 0.0);
@@ -62,17 +63,26 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<double>("land_vel_z", 0.5);
   this->get_parameter("land_vel_z", params_.land_vel_z);
 
-  this->declare_parameter<double>("fence_x_min", -10.0);
-  this->get_parameter("fence_x_min", params_.fence_x_min);
+  this->declare_parameter<double>("fence_x_buf_l", 10.0);
+  this->get_parameter("fence_x_buf_l", params_.fence_x_buf_l);
 
-  this->declare_parameter<double>("fence_x_max", 50.0);
-  this->get_parameter("fence_x_max", params_.fence_x_max);
+  this->declare_parameter<double>("fence_x_buf_r", 10.0);
+  this->get_parameter("fence_x_buf_r", params_.fence_x_buf_r);
 
-  this->declare_parameter<double>("fence_y_min", -10.0);
-  this->get_parameter("fence_y_min", params_.fence_y_min);
+  this->declare_parameter<double>("fence_y_buf_b", 10.0);
+  this->get_parameter("fence_y_buf_b", params_.fence_y_buf_b);
 
-  this->declare_parameter<double>("fence_y_max", 50.0);
-  this->get_parameter("fence_y_max", params_.fence_y_max);
+  this->declare_parameter<double>("fence_y_buf_t", 10.0);
+  this->get_parameter("fence_y_buf_t", params_.fence_y_buf_t);
+}
+
+void StarlingOffboard::InitializeGeofence(){
+  fence_x_min_ =  -params_.fence_x_buf_l;
+  fence_x_max_ = 1024.0 / params_.env_scale_factor + params_.fence_x_buf_r;
+  fence_y_min_ = -params_.fence_y_buf_b;
+  fence_y_max_ = 1024.0 / params_.env_scale_factor + params_.fence_y_buf_t;
+  RCLCPP_INFO(this->get_logger(), "Geofence initialized:");
+  RCLCPP_INFO(this->get_logger(), "Dimensions (L, R, B, T): %f, %f, %f, %f", fence_x_min_, fence_x_max_, fence_y_min_, fence_y_max_);
 }
 
 void StarlingOffboard::GetMissionControl(){
@@ -620,10 +630,10 @@ void StarlingOffboard::GeofenceCheck() {
     const Eigen::Vector4d vehicle_mission_position =
         TransformVec(pos_vec, T_ned_miss_);
 
-    if (vehicle_mission_position[0] < params_.fence_x_min ||
-        vehicle_mission_position[0] > params_.fence_x_max ||
-        vehicle_mission_position[1] < params_.fence_y_min ||
-        vehicle_mission_position[1] > params_.fence_y_max) {
+    if (vehicle_mission_position[0] < fence_x_min_ ||
+        vehicle_mission_position[0] > fence_x_max_ ||
+        vehicle_mission_position[1] < fence_y_min_ ||
+        vehicle_mission_position[1] > fence_y_max_) {
         
       // Warn on the first breach until breach is reset
       if (!breach_) {
@@ -674,14 +684,22 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
   TrajectorySetpoint msg{};
   msg.position = {std::nanf(""), std::nanf(""),
                   std::nanf("")};  // required for vel control in px4
-  msg.velocity = {static_cast<float>(target_vel[0]),
-                  static_cast<float>(target_vel[1]),
-                  static_cast<float>(target_vel[2])};
+  if (enable_ && !breach_) {
+      msg.velocity = {static_cast<float>(target_vel[0]),
+                      static_cast<float>(target_vel[1]),
+                      static_cast<float>(target_vel[2])
+      };
+  }
+  // Hold position if not enabled or breach
+  else {
+      msg.velocity = {static_cast<float>(0.0),
+                      static_cast<float>(0.0),
+                      static_cast<float>(0.0)
+      };
+  }
   msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (enable_ && !breach_) {
-    pubs_.traj_setpoint->publish(msg);
-  }
+  pubs_.traj_setpoint->publish(msg);
 }
 
 /**
@@ -714,9 +732,10 @@ void StarlingOffboard::UpdateVel(
   //                           clamp(scale * cmd_vel->twist.linear.x,
   //                           -2.0, 2.0), (double) clamp((double)(-kP * err_z),
   //                           -2.0, 2.0), 1.0);
-
   const Eigen::Vector4d vel_mission(cmd_vel->twist.linear.x,
-                                    cmd_vel->twist.linear.y, kP * err_z, 0.0);
+                                    cmd_vel->twist.linear.y, 
+                                    kP * err_z, 
+                                    0.0);
 
   // Transform the velocity from the mission frame to NED
   vel_ned_ = TransformVec(vel_mission, T_miss_ned_);

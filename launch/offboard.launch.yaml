@@ -26,6 +26,18 @@ launch:
   - arg:
       name: 'env_scale_factor'
       default: '4.0'
+  - arg:
+      name: 'fence_x_buf_l'
+      default: '10.0'
+  - arg:
+      name: 'fence_x_buf_r'
+      default: '10.0'
+  - arg:
+      name: 'fence_y_buf_b'
+      default: '10.0'
+  - arg:
+      name: 'fence_y_buf_t'
+      default: '10.0'
 
   - node:
       pkg: 'starling_offboard_cpp'
@@ -50,3 +62,11 @@ launch:
           value: '$(var max_speed)'
         - name: 'kP'
           value: '$(var kP)'
+        - name: 'fence_x_buf_l'
+          value: '$(var fence_x_buf_l)'
+        - name: 'fence_x_buf_r'
+          value: '$(var fence_x_buf_r)'
+        - name: 'fence_y_buf_b'
+          value: '$(var fence_y_buf_b)'
+        - name: 'fence_y_buf_t'
+          value: '$(var fence_y_buf_t)'

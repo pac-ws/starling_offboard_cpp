@@ -130,6 +130,11 @@ class StarlingOffboard : public rclcpp::Node {
 
   rclcpp::QoS qos_;
 
+  double fence_x_min_;
+  double fence_x_max_;
+  double fence_y_min_;
+  double fence_y_max_;
+
   // Parameters
   struct Params {
     size_t buffer_size;
@@ -142,10 +147,10 @@ class StarlingOffboard : public rclcpp::Node {
     double y_takeoff;
     double z_takeoff;
     double land_vel_z;
-    double fence_x_min = -10.0;
-    double fence_x_max = 50.0;
-    double fence_y_min = -10.0;
-    double fence_y_max = 50.0;
+    double fence_x_buf_l = 10.0;
+    double fence_x_buf_r = 10.0;
+    double fence_y_buf_b = 10.0;
+    double fence_y_buf_t = 10.0;
   };
   Params params_;
 
@@ -182,6 +187,7 @@ class StarlingOffboard : public rclcpp::Node {
   }
 
   void GetNodeParameters();
+  void InitializeGeofence();
   void GetMissionControl();
   void GetMissionOriginGPS();
   void GetLaunchGPS();
