@@ -272,6 +272,18 @@ void StarlingOffboard::InitializeSubscribers() {
           "fmu/out/vehicle_local_position", qos_,
           std::bind(&StarlingOffboard::VehicleLocalPosCallback, this,
                     std::placeholders::_1));
+  subs_.vehicle_global_pos =
+      this->create_subscription<px4_msgs::msg::VehicleGlobalPosition>(
+          "fmu/out/vehicle_global_position", qos_,
+              [this](const px4_msgs::msg::VehicleGlobalPosition::SharedPtr msg) {
+                global_pos_msg_ = *msg;
+              });
+  subs_.vehicle_gps_pos =
+      this->create_subscription<px4_msgs::msg::SensorGps>(
+          "fmu/out/vehicle_gps_position", qos_,
+              [this](const px4_msgs::msg::SensorGps::SharedPtr msg) {
+                gps_pos_msg_ = *msg;
+              });
   subs_.mission_origin_gps = 
       this->create_subscription<geometry_msgs::msg::Point>(
               "/pac_gcs/mission_origin_gps", qos_,
@@ -295,7 +307,6 @@ void StarlingOffboard::InitializeSubscribers() {
                   mission_control_received_ = true;
                 }
               });
-
 }
 
 void StarlingOffboard::InitializePublishers() {
@@ -306,12 +317,8 @@ void StarlingOffboard::InitializePublishers() {
       rmw_qos_profile_default.history, params_.buffer_size));
   qos_reliable.reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE);
 
-  // High BW
-  // pubs_.nav_path =
-  //    this->create_publisher<nav_msgs::msg::Path>("path", qos_reliable);
-
-  pubs_.drone_status =
-      this->create_publisher<std_msgs::msg::String>("drone_status", qos_);
+  pubs_.status =
+      this->create_publisher<async_pac_gnn_interfaces::msg::RobotStatus>("status", qos_);
 
   pubs_.offboard_control_mode =
       this->create_publisher<px4_msgs::msg::OffboardControlMode>(
@@ -323,19 +330,15 @@ void StarlingOffboard::InitializePublishers() {
           "fmu/in/trajectory_setpoint", params_.buffer_size);
   timer_ = this->create_wall_timer(
       100ms, std::bind(&StarlingOffboard::TimerCallback, this));
-  // path_pub_timer_ = this->create_wall_timer(
-  //         1000ms, std::bind(&StarlingOffboard::PathPublisherTimerCallback,
-  //         this));
+
+  status_timer_ = this->create_wall_timer(
+          1000ms, std::bind(&StarlingOffboard::StatusTimerCallback, this));
 }
 
 /**
  * @brief Main Loop
  */
 void StarlingOffboard::TimerCallback() {
-  //  Publish the current state
-  auto state_msg = std_msgs::msg::String();
-  state_msg.data = StateToString(state_);
-  pubs_.drone_status->publish(state_msg);
 
   // Geofence check
   GeofenceCheck();
@@ -539,6 +542,30 @@ void StarlingOffboard::TimerCallback() {
       // Need to restart the drone after landing so just spin in this state.
       break;
   }
+}
+
+void StarlingOffboard::StatusTimerCallback() {
+
+  auto status_msg = async_pac_gnn_interfaces::msg::RobotStatus();
+  status_msg.batt = 100; // TODO
+  status_msg.state = StateToString(state_);
+  status_msg.breach = breach_;
+  status_msg.gps_lat = global_pos_msg_.lat;
+  status_msg.gps_lon = global_pos_msg_.lon;
+  status_msg.gps_alt = global_pos_msg_.alt;
+  status_msg.gps_sats = gps_pos_msg_.satellites_used;
+  status_msg.gps_heading = gps_pos_msg_.heading;
+  status_msg.local_pos_x = pos_msg_.x;
+  status_msg.local_pos_y = pos_msg_.y;
+  status_msg.local_pos_z = pos_msg_.z;
+  status_msg.local_pos_heading = pos_msg_.heading;
+  status_msg.pose_x = gnn_pose_.pose.position.x;
+  status_msg.pose_y = gnn_pose_.pose.position.y;
+  status_msg.pose_z = gnn_pose_.pose.position.z;
+  status_msg.ned_vel_x = vel_ned_[0];
+  status_msg.ned_vel_y = vel_ned_[1];
+  status_msg.ned_vel_z = vel_ned_[2];
+  pubs_.status->publish(status_msg);
 }
 
 void StarlingOffboard::PathPublisherTimerCallback() {
@@ -764,26 +791,26 @@ void StarlingOffboard::VehicleLocalPosCallback(
       }
       if (curr_position_[0] != 0 && curr_position_[1] != 0 &&
           curr_position_[2] != 0) {
-        geometry_msgs::msg::PoseStamped gnn_pose;
-        gnn_pose.header.stamp = this->get_clock()->now();
-        gnn_pose.header.frame_id = "map";
-        gnn_pose.pose.position.x = vehicle_mission_position[0];
-        gnn_pose.pose.position.y = vehicle_mission_position[1];
-        gnn_pose.pose.position.z = vehicle_mission_position[2];
-        path_.poses.push_back(gnn_pose);
+        //geometry_msgs::msg::PoseStamped gnn_pose;
+        gnn_pose_.header.stamp = this->get_clock()->now();
+        gnn_pose_.header.frame_id = "map";
+        gnn_pose_.pose.position.x = vehicle_mission_position[0];
+        gnn_pose_.pose.position.y = vehicle_mission_position[1];
+        gnn_pose_.pose.position.z = vehicle_mission_position[2];
+        path_.poses.push_back(gnn_pose_);
       }
     }
 
     // Publish the current pose
-    geometry_msgs::msg::PoseStamped gnn_pose;
-    gnn_pose.header.stamp = this->get_clock()->now();
-    gnn_pose.header.frame_id = "map";
+    //geometry_msgs::msg::PoseStamped gnn_pose_;
+    gnn_pose_.header.stamp = this->get_clock()->now();
+    gnn_pose_.header.frame_id = "map";
 
     // TODO
-    gnn_pose.pose.position.x = vehicle_mission_position[0];
-    gnn_pose.pose.position.y = vehicle_mission_position[1];
-    gnn_pose.pose.position.z = vehicle_mission_position[2];
-    pubs_.pose->publish(gnn_pose);
+    gnn_pose_.pose.position.x = vehicle_mission_position[0];
+    gnn_pose_.pose.position.y = vehicle_mission_position[1];
+    gnn_pose_.pose.position.z = vehicle_mission_position[2];
+    pubs_.pose->publish(gnn_pose_);
   }
 }
 

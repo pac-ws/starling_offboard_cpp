@@ -10,6 +10,8 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <iostream>
+#include <ament_index_cpp/get_package_prefix.hpp>
+#include <async_pac_gnn_interfaces/msg/robot_status.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <px4_msgs/msg/offboard_control_mode.hpp>
 #include <px4_msgs/msg/sensor_gps.hpp>
@@ -122,11 +124,14 @@ class StarlingOffboard : public rclcpp::Node {
 
   // Timer drives the main loop
   rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::TimerBase::SharedPtr status_timer_;
   rclcpp::TimerBase::SharedPtr path_pub_timer_;
   rclcpp::Clock::SharedPtr clock_;
 
   px4_msgs::msg::VehicleLocalPosition pos_msg_;
   px4_msgs::msg::SensorGps gps_pos_msg_;
+  px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
+  geometry_msgs::msg::PoseStamped gnn_pose_;
 
   rclcpp::QoS qos_;
 
@@ -156,28 +161,22 @@ class StarlingOffboard : public rclcpp::Node {
 
   struct Subscriptions {
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel;
-    rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr
-        mission_origin_gps;
+    rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr mission_origin_gps;
     rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr launch_gps;
-
-    rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr
-        vehicle_status;
-    rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
-        vehicle_local_pos;
-    rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr
-        mission_control;
+    rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr vehicle_status;
+    rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr vehicle_local_pos;
+    rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr vehicle_global_pos;
+    rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
+    rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr mission_control;
   };
   Subscriptions subs_;
 
   struct Publishers {
-    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr drone_status;
+    rclcpp::Publisher<async_pac_gnn_interfaces::msg::RobotStatus>::SharedPtr status;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr nav_path;
-
-    rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr
-        traj_setpoint;
-    rclcpp::Publisher<px4_msgs::msg::OffboardControlMode>::SharedPtr
-        offboard_control_mode;
+    rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr traj_setpoint;
+    rclcpp::Publisher<px4_msgs::msg::OffboardControlMode>::SharedPtr offboard_control_mode;
     rclcpp::Publisher<px4_msgs::msg::VehicleCommand>::SharedPtr vehicle_command;
   };
   Publishers pubs_;
@@ -198,6 +197,7 @@ class StarlingOffboard : public rclcpp::Node {
   void Disarm();
   void GeofenceCheck();
   void TimerCallback();
+  void StatusTimerCallback();
   void PathPublisherTimerCallback();
   bool HasReachedPos(const Eigen::Vector4d& target_pos);
   Eigen::Vector4d ComputeVel(const Eigen::Vector4d& target_pos);

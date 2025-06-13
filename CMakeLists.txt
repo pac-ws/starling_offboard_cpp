@@ -29,6 +29,7 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(rosbag2_cpp REQUIRED)
 find_package(message_filters REQUIRED)
+find_package(async_pac_gnn_interfaces REQUIRED)
 
 set(target_dependencies
   rclcpp
@@ -38,7 +39,8 @@ set(target_dependencies
   px4_msgs 
   GeographicLib
   nav_msgs
-  rosbag2_cpp)
+  rosbag2_cpp
+  async_pac_gnn_interfaces)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
