@@ -82,6 +82,7 @@ class StarlingOffboard : public rclcpp::Node {
   rclcpp::ParameterCallbackHandle::SharedPtr handle_enable_;
   rclcpp::ParameterCallbackHandle::SharedPtr handle_takeoff_;
   rclcpp::ParameterCallbackHandle::SharedPtr handle_land_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_geofence_;
   rclcpp::SyncParametersClient::SharedPtr sync_parameters_client_;
 
   bool gps_received_ = false;
@@ -152,6 +153,7 @@ class StarlingOffboard : public rclcpp::Node {
     double y_takeoff;
     double z_takeoff;
     double land_vel_z;
+    double world_size = 1024.0;
     double fence_x_buf_l = 10.0;
     double fence_x_buf_r = 10.0;
     double fence_y_buf_b = 10.0;
@@ -162,7 +164,7 @@ class StarlingOffboard : public rclcpp::Node {
   struct Subscriptions {
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel;
     rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr mission_origin_gps;
-    rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr launch_gps;
+    // rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr launch_gps;
     rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr vehicle_status;
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr vehicle_local_pos;
     rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr vehicle_global_pos;

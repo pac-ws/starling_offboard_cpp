@@ -60,6 +60,9 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<double>("kP", 1.0);
   this->get_parameter("kP", params_.kP);
 
+  this->declare_parameter<double>("world_size", 1024.0);
+  this->get_parameter("world_size", params_.world_size);
+
   this->declare_parameter<double>("land_vel_z", 0.5);
   this->get_parameter("land_vel_z", params_.land_vel_z);
 
@@ -78,9 +81,9 @@ void StarlingOffboard::GetNodeParameters() {
 
 void StarlingOffboard::InitializeGeofence(){
   fence_x_min_ =  -params_.fence_x_buf_l;
-  fence_x_max_ = 1024.0 / params_.env_scale_factor + params_.fence_x_buf_r;
+  fence_x_max_ = params_.world_size / params_.env_scale_factor + params_.fence_x_buf_r;
   fence_y_min_ = -params_.fence_y_buf_b;
-  fence_y_max_ = 1024.0 / params_.env_scale_factor + params_.fence_y_buf_t;
+  fence_y_max_ = params_.world_size / params_.env_scale_factor + params_.fence_y_buf_t;
   RCLCPP_INFO(this->get_logger(), "Geofence initialized:");
   RCLCPP_INFO(this->get_logger(), "Dimensions (L, R, B, T): %f, %f, %f, %f", fence_x_min_, fence_x_max_, fence_y_min_, fence_y_max_);
 }
@@ -96,7 +99,7 @@ void StarlingOffboard::GetMissionControl(){
   }
   
   auto result = sync_parameters_client_->get_parameters({"enable", "takeoff", "land"});
-  RCLCPP_INFO(this->get_logger(), "result size = %ld", result.size());
+  RCLCPP_DEBUG(this->get_logger(), "result size = %ld", result.size());
   for (auto &p : result) {
     if (p.get_name() == "enable") {
       enable_ = p.get_value<bool>();
@@ -109,6 +112,10 @@ void StarlingOffboard::GetMissionControl(){
     if (p.get_name() == "land") {
       land_ = p.get_value<bool>();
       RCLCPP_INFO(this->get_logger(), "init land = %d", land_);
+    }
+    if (p.get_name() == "geofence") {
+      geofence_ = p.get_value<bool>();
+      RCLCPP_INFO(this->get_logger(), "init geofence = %d", geofence_);
     }
   }
   
@@ -127,19 +134,25 @@ void StarlingOffboard::GetMissionControl(){
     land_ = p.get_value<bool>();
     RCLCPP_INFO(this->get_logger(), "received land = %d", land_);
   };
+  auto cb_geofence = [this](const rclcpp::Parameter& p) {
+    geofence_ = p.get_value<bool>();
+    RCLCPP_INFO(this->get_logger(), "received geofence = %d", geofence_);
+  };
   handle_enable_= mission_control_PEH_ptr_->add_parameter_callback(
       "enable", cb_enable, "/mission_control");
   handle_takeoff_= mission_control_PEH_ptr_->add_parameter_callback(
       "takeoff", cb_takeoff, "/mission_control");
   handle_land_= mission_control_PEH_ptr_->add_parameter_callback(
       "land", cb_land, "/mission_control");
+  handle_geofence_ = mission_control_PEH_ptr_->add_parameter_callback(
+      "geofence", cb_geofence, "/mission_control");
 }
 
 void StarlingOffboard::GetMissionOriginGPS() {
-  std::string service_name = "/pac_gcs/mission_origin_gps/get_parameters";
-  auto pac_gcs_parameters_client =
+  std::string service_name = "/mission_origin_gps/get_parameters";
+  auto mission_origin_parameters_client =
       this->create_client<rcl_interfaces::srv::GetParameters>(service_name);
-  while (!pac_gcs_parameters_client->wait_for_service(1s)) {
+  while (!mission_origin_parameters_client->wait_for_service(1s)) {
     if (!rclcpp::ok()) {
       rclcpp::shutdown();
     }
@@ -148,7 +161,7 @@ void StarlingOffboard::GetMissionOriginGPS() {
       std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
   request->names = {"mission_origin_lat", "mission_origin_lon", "heading"};
   while (!origin_gps_received_) {
-    auto result_future = pac_gcs_parameters_client->async_send_request(request);
+    auto result_future = mission_origin_parameters_client->async_send_request(request);
     if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
                                            result_future) !=
         rclcpp::FutureReturnCode::SUCCESS) {
@@ -245,12 +258,12 @@ void StarlingOffboard::ComputeTransforms() {
   assert(
       (T_miss_ned_ * T_ned_miss_).isApprox(Eigen::Matrix4d::Identity(), 0.001));
 
-  RCLCPP_INFO(this->get_logger(), "T_miss_ned:\n%s",
+  RCLCPP_DEBUG(this->get_logger(), "T_miss_ned:\n%s",
               EigenMatToStr(T_miss_ned_).c_str());
-  RCLCPP_INFO(this->get_logger(), "T_ned_miss:\n%s",
+  RCLCPP_DEBUG(this->get_logger(), "T_ned_miss:\n%s",
               EigenMatToStr(T_ned_miss_).c_str());
 
-  RCLCPP_INFO(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
+  RCLCPP_DEBUG(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
 }
 
 void StarlingOffboard::InitializeSubscribers() {
@@ -286,7 +299,7 @@ void StarlingOffboard::InitializeSubscribers() {
               });
   subs_.mission_origin_gps = 
       this->create_subscription<geometry_msgs::msg::Point>(
-              "/pac_gcs/mission_origin_gps", qos_,
+              "/mission_origin_gps", qos_,
               [this](const geometry_msgs::msg::Point::SharedPtr msg) {
                 mission_origin_lon_ = msg->x;
                 mission_origin_lat_ = msg->y;
@@ -362,15 +375,15 @@ void StarlingOffboard::TimerCallback() {
       RCLCPP_INFO(this->get_logger(), "Mission origin GPS received.");
 
       // Global origin
-      RCLCPP_INFO(this->get_logger(), "Global origin");
-      RCLCPP_INFO(this->get_logger(), "lat: %.8f", mission_origin_lat_);
-      RCLCPP_INFO(this->get_logger(), "lon: %.8f", mission_origin_lon_);
-      RCLCPP_INFO(this->get_logger(), "heading: %.8f", heading_);
+      RCLCPP_DEBUG(this->get_logger(), "Global origin");
+      RCLCPP_DEBUG(this->get_logger(), "lat: %.8f", mission_origin_lat_);
+      RCLCPP_DEBUG(this->get_logger(), "lon: %.8f", mission_origin_lon_);
+      RCLCPP_DEBUG(this->get_logger(), "heading: %.8f", heading_);
 
       // Global startup location
-      RCLCPP_INFO(this->get_logger(), "Global launch received");
-      RCLCPP_INFO(this->get_logger(), "lat: %.8f", launch_gps_lat_);
-      RCLCPP_INFO(this->get_logger(), "lon: %.8f", launch_gps_lon_);
+      RCLCPP_DEBUG(this->get_logger(), "Global launch received");
+      RCLCPP_DEBUG(this->get_logger(), "lat: %.8f", launch_gps_lat_);
+      RCLCPP_DEBUG(this->get_logger(), "lon: %.8f", launch_gps_lon_);
 
       ComputeTransforms();
 
@@ -386,15 +399,15 @@ void StarlingOffboard::TimerCallback() {
 
       takeoff_pos_ned_ = TransformVec(takeoff_pos_, T_miss_ned_);
 
-      RCLCPP_INFO(this->get_logger(), "Takeoff pos (miss): %f, %f, %f",
+      RCLCPP_DEBUG(this->get_logger(), "Takeoff pos (miss): %f, %f, %f",
                   takeoff_pos_[0], takeoff_pos_[1], takeoff_pos_[2]);
-      RCLCPP_INFO(this->get_logger(), "Takeoff pos (ned): %f, %f, %f",
+      RCLCPP_DEBUG(this->get_logger(), "Takeoff pos (ned): %f, %f, %f",
                   takeoff_pos_ned_[0], takeoff_pos_ned_[1],
                   takeoff_pos_ned_[2]);
 
       Eigen::Vector4d takeoff_pos_check =
           TransformVec(takeoff_pos_ned_, T_ned_miss_);
-      RCLCPP_INFO(this->get_logger(), "Takeoff pos check: %f, %f, %f",
+      RCLCPP_DEBUG(this->get_logger(), "Takeoff pos check: %f, %f, %f",
                   takeoff_pos_check[0], takeoff_pos_check[1],
                   takeoff_pos_check[2]);
 
@@ -416,7 +429,7 @@ void StarlingOffboard::TimerCallback() {
 
         state_ = State::ARMING;
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
-        RCLCPP_INFO(this->get_logger(), "yaw_: %f", yaw_);
+        RCLCPP_DEBUG(this->get_logger(), "yaw_: %f", yaw_);
       } 
       break;
 
@@ -431,10 +444,10 @@ void StarlingOffboard::TimerCallback() {
         if (arming_state_ == 2) {
           RCLCPP_INFO(this->get_logger(), "Vehicle armed");
           state_ = State::TAKEOFF;
-          RCLCPP_INFO(this->get_logger(), "yaw_: %f", yaw_);
+          RCLCPP_DEBUG(this->get_logger(), "yaw_: %f", yaw_);
           RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
         } else {
-          RCLCPP_INFO(this->get_logger(), "Vehicle not armed");
+          RCLCPP_WARN(this->get_logger(), "Vehicle not armed");
           // Retry
           offboard_setpoint_counter_ = 0;
         }
@@ -636,7 +649,7 @@ bool StarlingOffboard::HasReachedPos(const Eigen::Vector4d& target_pos) {
 void StarlingOffboard::Arm() {
   PubVehicleCommand(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0, 0.0,
                     0.0, 0.0, 0.0);
-  RCLCPP_INFO(this->get_logger(), "Arm command send");
+  RCLCPP_INFO_ONCE(this->get_logger(), "Arm command send");
 }
 
 /**

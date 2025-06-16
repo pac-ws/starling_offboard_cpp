@@ -27,6 +27,9 @@ launch:
       name: 'env_scale_factor'
       default: '4.0'
   - arg:
+      name: 'world_size'
+      default: '1024.0'
+  - arg:
       name: 'fence_x_buf_l'
       default: '10.0'
   - arg:
@@ -62,6 +65,8 @@ launch:
           value: '$(var max_speed)'
         - name: 'kP'
           value: '$(var kP)'
+        - name: 'world_size'
+          value: '$(var world_size)'
         - name: 'fence_x_buf_l'
           value: '$(var fence_x_buf_l)'
         - name: 'fence_x_buf_r'
