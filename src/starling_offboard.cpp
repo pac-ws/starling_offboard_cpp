@@ -5,9 +5,6 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   time_last_vel_update_ = clock_->now();
   
   GetNodeParameters();
-  GetSystemInfo();
-  InitializeGeofence();
-  RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
   
   // QoS
   rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
@@ -20,8 +17,9 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   InitializeSubscribers();
   InitializePublishers();
 
-  //GetMissionControl();
-  //GetMissionOriginGPS();
+  GetSystemInfo();
+  InitializeGeofence();
+  RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
 
   // z_takeoff is the altitude set by the user
   // alt_offset_'s value is produced by homify to account for altitude offsets on the ground.
@@ -87,7 +85,7 @@ void StarlingOffboard::InitializeGeofence(){
   fence_x_min_ =  -params_.fence_x_buf_l;
   fence_x_max_ = params_.world_size / env_scale_factor_ + params_.fence_x_buf_r;
   fence_y_min_ = -params_.fence_y_buf_b;
-  fence_y_max_ = params_.world_size / params_.env_scale_factor + params_.fence_y_buf_t;
+  fence_y_max_ = params_.world_size / env_scale_factor_ + params_.fence_y_buf_t;
   RCLCPP_INFO(this->get_logger(), "Geofence initialized:");
   RCLCPP_INFO(this->get_logger(), "Dimensions (L, R, B, T): %f, %f, %f, %f", fence_x_min_, fence_x_max_, fence_y_min_, fence_y_max_);
 }
