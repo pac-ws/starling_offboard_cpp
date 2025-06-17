@@ -5,7 +5,9 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   time_last_vel_update_ = clock_->now();
   
   GetNodeParameters();
+  GetSystemInfo();
   InitializeGeofence();
+  RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
   
   // QoS
   rmw_qos_profile_t qos_profile = rmw_qos_profile_sensor_data;
@@ -44,6 +46,8 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<double>("env_scale_factor", 50.0);
   this->get_parameter("env_scale_factor", params_.env_scale_factor);
+  // Default to the parameter value if not set by the system info service
+  env_scale_factor_ = params_.env_scale_factor;
 
   this->declare_parameter<double>("x_takeoff", 0.0);
   this->get_parameter("x_takeoff", params_.x_takeoff);
@@ -81,7 +85,7 @@ void StarlingOffboard::GetNodeParameters() {
 
 void StarlingOffboard::InitializeGeofence(){
   fence_x_min_ =  -params_.fence_x_buf_l;
-  fence_x_max_ = params_.world_size / params_.env_scale_factor + params_.fence_x_buf_r;
+  fence_x_max_ = params_.world_size / env_scale_factor_ + params_.fence_x_buf_r;
   fence_y_min_ = -params_.fence_y_buf_b;
   fence_y_max_ = params_.world_size / params_.env_scale_factor + params_.fence_y_buf_t;
   RCLCPP_INFO(this->get_logger(), "Geofence initialized:");
@@ -178,6 +182,30 @@ void StarlingOffboard::GetMissionOriginGPS() {
     heading_ = result->values[2].double_value;
     origin_gps_received_ = true;
   }
+}
+
+
+void StarlingOffboard::GetSystemInfo() {
+      std::string service_name = "/sim/get_system_info";
+      auto client = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(service_name);
+      while (!client->wait_for_service(1s)) {
+          if (!rclcpp::ok()) {
+              rclcpp::shutdown();
+          }
+      }
+      while(!system_info_received_){
+          auto request = std::make_shared<async_pac_gnn_interfaces::srv::SystemInfo::Request>();
+          request->name = "starling_offboard";
+          auto result_future = client->async_send_request(request);
+          if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) != rclcpp::FutureReturnCode::SUCCESS) {
+              rclcpp::sleep_for(1s);
+              continue;
+          }
+          auto result = result_future.get();
+          vel_scale_factor_ = result->velocity_scale_factor;
+          env_scale_factor_ = result->env_scale_factor;
+          system_info_received_ = true;
+      }
 }
 
 void StarlingOffboard::GetLaunchGPS() {
@@ -593,7 +621,7 @@ void StarlingOffboard::PathPublisherTimerCallback() {
       std::abs(curr_position_[1]) < 0.01) {
     return;
   }
-  Eigen::Vector4d scaled_pos = curr_position_ * params_.env_scale_factor;
+  Eigen::Vector4d scaled_pos = curr_position_ * env_scale_factor_;
   geometry_msgs::msg::PoseStamped latest_pose = path_.poses.back();
   double max_dist =
       std::max(std::abs(latest_pose.pose.position.x - scaled_pos[0]),

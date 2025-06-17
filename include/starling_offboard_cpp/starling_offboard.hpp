@@ -12,6 +12,7 @@
 #include <iostream>
 #include <ament_index_cpp/get_package_prefix.hpp>
 #include <async_pac_gnn_interfaces/msg/robot_status.hpp>
+#include <async_pac_gnn_interfaces/srv/system_info.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <px4_msgs/msg/offboard_control_mode.hpp>
 #include <px4_msgs/msg/sensor_gps.hpp>
@@ -141,6 +142,10 @@ class StarlingOffboard : public rclcpp::Node {
   double fence_y_min_;
   double fence_y_max_;
 
+  bool system_info_received_ = false;
+  double env_scale_factor_;
+  double vel_scale_factor_;
+
   // Parameters
   struct Params {
     size_t buffer_size;
@@ -189,6 +194,7 @@ class StarlingOffboard : public rclcpp::Node {
 
   void GetNodeParameters();
   void InitializeGeofence();
+  void GetSystemInfo();
   void GetMissionControl();
   void GetMissionOriginGPS();
   void GetLaunchGPS();
