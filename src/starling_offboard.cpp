@@ -394,13 +394,13 @@ void StarlingOffboard::TimerCallback() {
           RCLCPP_WARN_ONCE(this->get_logger(), "Waiting for mission control topic...");
           break;
       }
-      RCLCPP_INFO(this->get_logger(), "Mission control received.");
+      RCLCPP_INFO_ONCE(this->get_logger(), "Mission control received.");
 
       if (!origin_gps_received_) {
           RCLCPP_WARN_ONCE(this->get_logger(), "Waiting for mission origin GPS...");
           break;
       }
-      RCLCPP_INFO(this->get_logger(), "Mission origin GPS received.");
+      RCLCPP_INFO_ONCE(this->get_logger(), "Mission origin GPS received.");
 
       // Global origin
       RCLCPP_DEBUG(this->get_logger(), "Global origin");
