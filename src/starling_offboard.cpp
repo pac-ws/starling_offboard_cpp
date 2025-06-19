@@ -12,6 +12,12 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
       rclcpp::QoSInitialization(qos_profile.history, params_.buffer_size),
       qos_profile);
 
+  // z_takeoff is the altitude set by the user
+  // alt_offset_'s value is produced by homify to account for altitude offsets on the ground.
+  RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
+  takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
+  land_vel_[2] = params_.land_vel_z;
+
   GetLaunchGPS();
 
   InitializeSubscribers();
@@ -20,16 +26,6 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   GetSystemInfo();
   InitializeGeofence();
   RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
-
-  // z_takeoff is the altitude set by the user
-  // alt_offset_'s value is produced by homify to account for altitude offsets on the ground.
-  RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
-  takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
-
-  land_vel_[2] = params_.land_vel_z;
-
-  // TODO Revert before real flight
-  // 10Hz Timer
 }
 
 void StarlingOffboard::GetNodeParameters() {
@@ -205,6 +201,7 @@ void StarlingOffboard::GetSystemInfo() {
           params_.world_size = static_cast<double>(result->world_size);
           system_info_received_ = true;
       }
+    RCLCPP_WARN(this->get_logger(), "Received system info");
 }
 
 void StarlingOffboard::GetLaunchGPS() {
