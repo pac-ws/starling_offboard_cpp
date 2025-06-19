@@ -100,12 +100,12 @@ void StarlingOffboard::GetMissionControl(){
     RCLCPP_INFO(this->get_logger(), "service not available, waiting again...");
   }
   
-  auto result = sync_parameters_client_->get_parameters({"enable", "takeoff", "land"});
+  auto result = sync_parameters_client_->get_parameters({"offboard_enable", "takeoff", "land", "geofence"});
   RCLCPP_DEBUG(this->get_logger(), "result size = %ld", result.size());
   for (auto &p : result) {
-    if (p.get_name() == "enable") {
-      enable_ = p.get_value<bool>();
-      RCLCPP_INFO(this->get_logger(), "init enable = %d", enable_);
+    if (p.get_name() == "offboard_enable") {
+      offboard_enable_ = p.get_value<bool>();
+      RCLCPP_INFO(this->get_logger(), "init offboard_enable = %d", offboard_enable_);
     }
     if (p.get_name() == "takeoff") {
       takeoff_ = p.get_value<bool>();
@@ -124,9 +124,9 @@ void StarlingOffboard::GetMissionControl(){
   mission_control_PEH_ptr_ =
       std::make_shared<rclcpp::ParameterEventHandler>(this);
   
-  auto cb_enable = [this](const rclcpp::Parameter& p) {
-    enable_ = p.get_value<bool>();
-    RCLCPP_INFO(this->get_logger(), "received enable = %d", enable_);
+  auto cb_offboard_enable = [this](const rclcpp::Parameter& p) {
+    offboard_enable_ = p.get_value<bool>();
+    RCLCPP_INFO(this->get_logger(), "received offboard_enable = %d", offboard_enable_);
   };
   auto cb_takeoff = [this](const rclcpp::Parameter& p) {
     takeoff_ = p.get_value<bool>();
@@ -140,8 +140,8 @@ void StarlingOffboard::GetMissionControl(){
     geofence_ = p.get_value<bool>();
     RCLCPP_INFO(this->get_logger(), "received geofence = %d", geofence_);
   };
-  handle_enable_= mission_control_PEH_ptr_->add_parameter_callback(
-      "enable", cb_enable, "/mission_control");
+  handle_offboard_enable_= mission_control_PEH_ptr_->add_parameter_callback(
+      "offboard_enable", cb_offboard_enable, "/mission_control");
   handle_takeoff_= mission_control_PEH_ptr_->add_parameter_callback(
       "takeoff", cb_takeoff, "/mission_control");
   handle_land_= mission_control_PEH_ptr_->add_parameter_callback(
@@ -202,6 +202,7 @@ void StarlingOffboard::GetSystemInfo() {
           auto result = result_future.get();
           vel_scale_factor_ = result->velocity_scale_factor;
           env_scale_factor_ = result->env_scale_factor;
+          params_.world_size = static_cast<double>(result->world_size);
           system_info_received_ = true;
       }
 }
@@ -333,18 +334,14 @@ void StarlingOffboard::InitializeSubscribers() {
                 origin_gps_received_ = true;
               });
   subs_.mission_control = 
-      this->create_subscription<std_msgs::msg::Int32MultiArray>(
+      this->create_subscription<async_pac_gnn_interfaces::msg::MissionControl>(
               "/mission_control", 10,
-              [this](const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
-                if (msg->data.size() == 5) {
-                  // hardware_enable, enable, takeoff, land, geofence
-                  enable_ = msg->data[1];
-                  takeoff_ = msg->data[2];
-                  land_ = msg->data[3];
-                  // Disable manual geofence for now
-                  geofence_ = msg->data[4];
-                  mission_control_received_ = true;
-                }
+              [this](const async_pac_gnn_interfaces::msg::MissionControl::SharedPtr msg) {
+                offboard_enable_ = msg->offboard_enable;
+                takeoff_ = msg->takeoff;
+                land_ = msg->land;
+                geofence_ = msg->geofence;
+                mission_control_received_ = true;
               });
 }
 
@@ -451,7 +448,7 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::PREFLT:
-      if (takeoff_ && enable_) {
+      if (takeoff_ && offboard_enable_) {
 
         state_ = State::ARMING;
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
@@ -738,7 +735,7 @@ void StarlingOffboard::PubOffboardControlMode(const StarlingOffboard::ControlMod
   msg.attitude = false;
   msg.body_rate = false;
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (enable_) {
+  if (offboard_enable_) {
     pubs_.offboard_control_mode->publish(msg);
   }
 }
@@ -750,7 +747,7 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
   TrajectorySetpoint msg{};
   msg.position = {std::nanf(""), std::nanf(""),
                   std::nanf("")};  // required for vel control in px4
-  if (enable_ && !breach_) {
+  if (offboard_enable_ && !breach_) {
       msg.velocity = {static_cast<float>(target_vel[0]),
                       static_cast<float>(target_vel[1]),
                       static_cast<float>(target_vel[2])
@@ -778,7 +775,7 @@ void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
                   static_cast<float>(target_pos[2])};
   msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (enable_) {
+  if (offboard_enable_) {
     pubs_.traj_setpoint->publish(msg);
   }
 }

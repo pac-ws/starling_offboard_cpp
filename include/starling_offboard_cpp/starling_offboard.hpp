@@ -28,7 +28,7 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/int32.hpp>
-#include <std_msgs/msg/int32_multi_array.hpp>
+#include <async_pac_gnn_interfaces/msg/mission_control.hpp>
 #include <string>
 #include <string_view>
 
@@ -73,17 +73,22 @@ class StarlingOffboard : public rclcpp::Node {
   uint8_t arming_state_;
 
   // Mission Control
-  bool enable_ = false;
+  bool offboard_enable_ = false;
   bool takeoff_ = false;
   bool land_ = false;
   bool geofence_ = false;
+  bool offboard_only_ = false;
   bool breach_ = false;
 
   std::shared_ptr<rclcpp::ParameterEventHandler> mission_control_PEH_ptr_;
-  rclcpp::ParameterCallbackHandle::SharedPtr handle_enable_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_hw_enable_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_offboard_enable_;
   rclcpp::ParameterCallbackHandle::SharedPtr handle_takeoff_;
   rclcpp::ParameterCallbackHandle::SharedPtr handle_land_;
   rclcpp::ParameterCallbackHandle::SharedPtr handle_geofence_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_offboard_only_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_lpac_l1_;
+  rclcpp::ParameterCallbackHandle::SharedPtr handle_lpac_l2_;
   rclcpp::SyncParametersClient::SharedPtr sync_parameters_client_;
 
   bool gps_received_ = false;
@@ -174,7 +179,7 @@ class StarlingOffboard : public rclcpp::Node {
     rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr vehicle_local_pos;
     rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr vehicle_global_pos;
     rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
-    rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr mission_control;
+    rclcpp::Subscription<async_pac_gnn_interfaces::msg::MissionControl>::SharedPtr mission_control;
   };
   Subscriptions subs_;
 
