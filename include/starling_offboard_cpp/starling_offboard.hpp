@@ -39,9 +39,11 @@ using namespace px4_msgs::msg;
 class StarlingOffboard : public rclcpp::Node {
  public:
   enum class ControlMode {POS, VEL};
-  enum class State { IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING_H, LANDING_V, DISARM };
+  enum class State { INIT, IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING_H, LANDING_V, DISARM };
   static std::string StateToString(StarlingOffboard::State state) {
     switch (state) {
+      case StarlingOffboard::State::INIT:
+        return "INIT";
       case StarlingOffboard::State::IDLE:
         return "IDLE";
       case StarlingOffboard::State::PREFLT:
@@ -79,6 +81,7 @@ class StarlingOffboard : public rclcpp::Node {
   bool geofence_ = false;
   bool offboard_only_ = false;
   bool breach_ = false;
+  bool init_done_ = false;
 
   std::shared_ptr<rclcpp::ParameterEventHandler> mission_control_PEH_ptr_;
   rclcpp::ParameterCallbackHandle::SharedPtr handle_hw_enable_;

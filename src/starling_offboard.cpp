@@ -17,15 +17,6 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
   land_vel_[2] = params_.land_vel_z;
-
-  GetLaunchGPS();
-
-  InitializeSubscribers();
-  InitializePublishers();
-
-  GetSystemInfo();
-  InitializeGeofence();
-  RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
 }
 
 void StarlingOffboard::GetNodeParameters() {
@@ -365,7 +356,7 @@ void StarlingOffboard::InitializePublishers() {
       100ms, std::bind(&StarlingOffboard::TimerCallback, this));
 
   status_timer_ = this->create_wall_timer(
-          1000ms, std::bind(&StarlingOffboard::StatusTimerCallback, this));
+      1000ms, std::bind(&StarlingOffboard::StatusTimerCallback, this));
 }
 
 /**
@@ -374,10 +365,27 @@ void StarlingOffboard::InitializePublishers() {
 void StarlingOffboard::TimerCallback() {
 
   // Geofence check
-  GeofenceCheck();
+  if (init_done_) {
+    GeofenceCheck();
+  }
 
   // State Machine
   switch (state_) {
+    case State::INIT: {
+      GetLaunchGPS();
+
+      InitializeSubscribers();
+      InitializePublishers();
+
+      GetSystemInfo();
+      InitializeGeofence();
+      RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
+
+      init_done_ = true;
+      state_ = State::IDLE;
+      break;
+    }
+
     case State::IDLE: {
       // Mission origin has been converted to a topic
       // Homify launch GPS is still a parameter
