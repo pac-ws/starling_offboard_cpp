@@ -39,7 +39,7 @@ using namespace px4_msgs::msg;
 class StarlingOffboard : public rclcpp::Node {
  public:
   enum class ControlMode {POS, VEL};
-  enum class State { IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING_SEQ_HORIZONTAL, LANDING_SEQ_VERTICAL, DISARM };
+  enum class State { IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING_H, LANDING_V, DISARM };
   static std::string StateToString(StarlingOffboard::State state) {
     switch (state) {
       case StarlingOffboard::State::IDLE:
@@ -52,10 +52,10 @@ class StarlingOffboard : public rclcpp::Node {
         return "TAKEOFF";
       case StarlingOffboard::State::MISSION:
         return "MISSION";
-      case StarlingOffboard::State::LANDING_SEQ_HORIZONTAL:
-        return "LANDING_SEQ_HORIZONTAL";
-      case StarlingOffboard::State::LANDING_SEQ_VERTICAL:
-        return "LANDING_SEQ_VERTICAL";
+      case StarlingOffboard::State::LANDING_H:
+        return "LANDING_H";
+      case StarlingOffboard::State::LANDING_V:
+        return "LANDING_V";
       case StarlingOffboard::State::DISARM:
         return "DISARM";
       default:

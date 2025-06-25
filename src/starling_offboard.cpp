@@ -506,7 +506,7 @@ void StarlingOffboard::TimerCallback() {
     // GNN, Square, etc..
     case State::MISSION: {
       if (land_) {
-        state_ = State::LANDING_SEQ_HORIZONTAL;
+        state_ = State::LANDING_H;
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
         RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
         break;
@@ -535,10 +535,10 @@ void StarlingOffboard::TimerCallback() {
       break;
     }
 
-    case State::LANDING_SEQ_HORIZONTAL:
+    case State::LANDING_H:
       reached_land_pos_h_ = this->HasReachedPos(takeoff_pos_ned_);
       if (reached_land_pos_h_) {
-        state_ = State::LANDING_SEQ_VERTICAL;
+        state_ = State::LANDING_V;
         RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       }
@@ -549,7 +549,7 @@ void StarlingOffboard::TimerCallback() {
       }
       break;
 
-    case State::LANDING_SEQ_VERTICAL:
+    case State::LANDING_V:
       // Check both position and velocity to ensure the drone has landed
       reached_land_pos_v_ = this->HasReachedPos(start_pos_ned_);
       reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
