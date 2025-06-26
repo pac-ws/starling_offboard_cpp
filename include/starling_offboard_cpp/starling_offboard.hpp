@@ -39,11 +39,17 @@ using namespace px4_msgs::msg;
 class StarlingOffboard : public rclcpp::Node {
  public:
   enum class ControlMode {POS, VEL};
-  enum class State { INIT, IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING_H, LANDING_V, DISARM };
+  enum class State { INIT_START, INIT_GPS, INIT_SYS, INIT_FIN, IDLE, PREFLT, ARMING, TAKEOFF, MISSION, LANDING_H, LANDING_V, DISARM };
   static std::string StateToString(StarlingOffboard::State state) {
     switch (state) {
-      case StarlingOffboard::State::INIT:
-        return "INIT";
+      case StarlingOffboard::State::INIT_START:
+        return "INIT_START";
+      case StarlingOffboard::State::INIT_GPS:
+        return "INIT_GPS";
+      case StarlingOffboard::State::INIT_SYS:
+        return "INIT_SYS";
+      case StarlingOffboard::State::INIT_FIN:
+        return "INIT_FIN";
       case StarlingOffboard::State::IDLE:
         return "IDLE";
       case StarlingOffboard::State::PREFLT:
@@ -94,6 +100,9 @@ class StarlingOffboard : public rclcpp::Node {
   rclcpp::ParameterCallbackHandle::SharedPtr handle_lpac_l2_;
   rclcpp::SyncParametersClient::SharedPtr sync_parameters_client_;
 
+  rclcpp::Client<rcl_interfaces::srv::GetParameters>::SharedPtr homify_parameters_client_;
+  rclcpp::Client<async_pac_gnn_interfaces::srv::SystemInfo>::SharedPtr sys_info_client_;
+
   bool gps_received_ = false;
   bool origin_gps_received_ = false;
   bool mission_control_received_ = false;
@@ -118,7 +127,7 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Matrix<double, 4, 4> T_miss_ned_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_ned_miss_ = Eigen::Matrix4d::Identity();
 
-  State state_ = State::IDLE;
+  State state_ = State::INIT_START;
 
   // Holds the current velocity from the mission to be sent to the px4
   Eigen::Vector4d vel_ned_ = Eigen::Vector4d::Unit(3);

@@ -17,6 +17,14 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
   land_vel_[2] = params_.land_vel_z;
+
+  timer_ = this->create_wall_timer(
+      100ms, std::bind(&StarlingOffboard::TimerCallback, this));
+
+  status_timer_ = this->create_wall_timer(
+      1000ms, std::bind(&StarlingOffboard::StatusTimerCallback, this));
+
+  RCLCPP_WARN(this->get_logger(), "Initialized Timers");
 }
 
 void StarlingOffboard::GetNodeParameters() {
@@ -171,63 +179,93 @@ void StarlingOffboard::GetMissionOriginGPS() {
 
 
 void StarlingOffboard::GetSystemInfo() {
-      std::string service_name = "/sim/get_system_info";
-      auto client = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(service_name);
-      while (!client->wait_for_service(1s)) {
-          if (!rclcpp::ok()) {
-              rclcpp::shutdown();
-          }
-      }
-      while(!system_info_received_){
-          auto request = std::make_shared<async_pac_gnn_interfaces::srv::SystemInfo::Request>();
-          request->name = "starling_offboard";
-          auto result_future = client->async_send_request(request);
-          if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) != rclcpp::FutureReturnCode::SUCCESS) {
-              rclcpp::sleep_for(1s);
-              continue;
-          }
-          auto result = result_future.get();
-          vel_scale_factor_ = result->velocity_scale_factor;
-          env_scale_factor_ = result->env_scale_factor;
-          params_.world_size = static_cast<double>(result->world_size);
-          system_info_received_ = true;
-      }
-    RCLCPP_WARN(this->get_logger(), "Received system info");
+   //   std::string service_name = "/sim/get_system_info";
+   //   auto client = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(service_name);
+   //   while (!client->wait_for_service(1s)) {
+   //       if (!rclcpp::ok()) {
+   //           rclcpp::shutdown();
+   //       }
+   //   }
+   //   while(!system_info_received_){
+   //       auto request = std::make_shared<async_pac_gnn_interfaces::srv::SystemInfo::Request>();
+   //       request->name = "starling_offboard";
+   //       auto result_future = client->async_send_request(request);
+   //       if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) != rclcpp::FutureReturnCode::SUCCESS) {
+   //           rclcpp::sleep_for(1s);
+   //           continue;
+   //       }
+   //       auto result = result_future.get();
+   //       vel_scale_factor_ = result->velocity_scale_factor;
+   //       env_scale_factor_ = result->env_scale_factor;
+   //       params_.world_size = static_cast<double>(result->world_size);
+   //       system_info_received_ = true;
+   //   }
+   // RCLCPP_WARN(this->get_logger(), "Received system info");
+   //
+  auto request = std::make_shared<async_pac_gnn_interfaces::srv::SystemInfo::Request>();
+  request->name = "starling_offboard";
+  sys_info_client_->async_send_request(
+    request,
+    [this](rclcpp::Client<async_pac_gnn_interfaces::srv::SystemInfo>::SharedFuture future){
+      auto result = future.get();
+      vel_scale_factor_ = result->velocity_scale_factor;
+      env_scale_factor_ = result->env_scale_factor;
+      params_.world_size = static_cast<double>(result->world_size);
+      system_info_received_ = true;
+    }
+  );
 }
 
 void StarlingOffboard::GetLaunchGPS() {
-  std::string service_name = "gps_fix/get_parameters";
-  auto homify_parameters_client =
-      this->create_client<rcl_interfaces::srv::GetParameters>(service_name);
-  while (!homify_parameters_client->wait_for_service(1s)) {
-    if (!rclcpp::ok()) {
-      rclcpp::shutdown();
+  //std::string service_name = "gps_fix/get_parameters";
+  //auto homify_parameters_client =
+  //    this->create_client<rcl_interfaces::srv::GetParameters>(service_name);
+  //while (!homify_parameters_client->wait_for_service(1s)) {
+  //  if (!rclcpp::ok()) {
+  //    rclcpp::shutdown();
+  //  }
+  //}
+  //while (!gps_received_) {
+  //  auto request =
+  //      std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
+  //  request->names = {"launch_gps"};
+  //  auto result_future = homify_parameters_client->async_send_request(request);
+  //  if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
+  //                                         result_future) !=
+  //      rclcpp::FutureReturnCode::SUCCESS) {
+  //    rclcpp::sleep_for(1s);
+  //    continue;
+  //  }
+  //  auto result = result_future.get();
+  //  if (result->values.size() == 0) {
+  //    rclcpp::sleep_for(1s);
+  //    continue;
+  //  }
+  //  std::vector<double> launch_gps = result->values[0].double_array_value;
+  //  launch_gps_lat_ = launch_gps[0];
+  //  launch_gps_lon_ = launch_gps[1];
+  //  yaw_ = launch_gps[2];
+  //  // Flip z-axis to match mission frame
+  //  alt_offset_ =  std::max(-launch_gps[3], 0.0);
+  //  gps_received_ = true;
+  //}
+  
+  auto request = std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
+  request->names = {"launch_gps"};
+
+  homify_parameters_client_->async_send_request(
+    request,
+    [this](rclcpp::Client<rcl_interfaces::srv::GetParameters>::SharedFuture future){
+      auto result = future.get();         
+      std::vector<double> launch_gps = result->values[0].double_array_value;
+      launch_gps_lat_ = launch_gps[0];
+      launch_gps_lon_ = launch_gps[1];
+      yaw_ = launch_gps[2];
+      // Flip z-axis to match mission frame
+      alt_offset_ =  std::max(-launch_gps[3], 0.0);
+      gps_received_ = true;
     }
-  }
-  while (!gps_received_) {
-    auto request =
-        std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
-    request->names = {"launch_gps"};
-    auto result_future = homify_parameters_client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
-                                           result_future) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-      rclcpp::sleep_for(1s);
-      continue;
-    }
-    auto result = result_future.get();
-    if (result->values.size() == 0) {
-      rclcpp::sleep_for(1s);
-      continue;
-    }
-    std::vector<double> launch_gps = result->values[0].double_array_value;
-    launch_gps_lat_ = launch_gps[0];
-    launch_gps_lon_ = launch_gps[1];
-    yaw_ = launch_gps[2];
-    // Flip z-axis to match mission frame
-    alt_offset_ =  std::max(-launch_gps[3], 0.0);
-    gps_received_ = true;
-  }
+  );
 }
 
 void StarlingOffboard::ComputeTransforms() {
@@ -352,11 +390,7 @@ void StarlingOffboard::InitializePublishers() {
   pubs_.traj_setpoint =
       this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(
           "fmu/in/trajectory_setpoint", params_.buffer_size);
-  timer_ = this->create_wall_timer(
-      100ms, std::bind(&StarlingOffboard::TimerCallback, this));
 
-  status_timer_ = this->create_wall_timer(
-      1000ms, std::bind(&StarlingOffboard::StatusTimerCallback, this));
 }
 
 /**
@@ -371,18 +405,51 @@ void StarlingOffboard::TimerCallback() {
 
   // State Machine
   switch (state_) {
-    case State::INIT: {
-      GetLaunchGPS();
+    case State::INIT_START: {
+      // Services
+      std::string launch_service_name = "gps_fix/get_parameters";
+      homify_parameters_client_ = this->create_client<rcl_interfaces::srv::GetParameters>(launch_service_name);
+      std::string sys_info_service_name ="/sim/get_system_info";
+      sys_info_client_ = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(sys_info_service_name);
+      state_ = State::INIT_GPS;
+      break;
+    }
 
-      InitializeSubscribers();
-      InitializePublishers();
+    case State::INIT_GPS: {
+      if (homify_parameters_client_->service_is_ready()) {
+        GetLaunchGPS();
+        InitializeSubscribers();
+        InitializePublishers();
+        RCLCPP_WARN(this->get_logger(), "Initialized pubs and subs");
+        state_ = State::INIT_SYS;
+      }
+      else{;
+          RCLCPP_ERROR_ONCE(this->get_logger(), "Parameter service not available. Trying again");
+      }
+      break;
+    }
 
-      GetSystemInfo();
-      InitializeGeofence();
-      RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
+    case State::INIT_SYS: {
+      if (sys_info_client_->service_is_ready()) {
+        RCLCPP_WARN(this->get_logger(), "Calling system info");
+        GetSystemInfo();
+        RCLCPP_WARN(this->get_logger(), "Got system info");
+        state_ = State::INIT_FIN;
+      }
+      else{
+          RCLCPP_ERROR_ONCE(this->get_logger(), "System info service not available. Trying again.");
+      }
+      break;
+    }
 
-      init_done_ = true;
-      state_ = State::IDLE;
+    case State::INIT_FIN: {
+      RCLCPP_WARN_ONCE(this->get_logger(), "GPS %d SYS INFO %d", gps_received_, system_info_received_);
+      if (gps_received_ && system_info_received_) {
+          InitializeGeofence();
+          RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
+          init_done_ = true;
+          state_ = State::IDLE;
+      }
       break;
     }
 
@@ -886,7 +953,6 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
 }
 
 int main(int argc, char* argv[]) {
-  std::cout << "Starting Starling offboard node..." << std::endl;
   setvbuf(stdout, NULL, _IONBF, BUFSIZ);
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<StarlingOffboard>());
