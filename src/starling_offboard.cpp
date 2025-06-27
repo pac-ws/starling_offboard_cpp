@@ -18,6 +18,12 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
   land_vel_[2] = params_.land_vel_z;
 
+  std::string launch_service_name = "gps_fix/get_parameters";
+  homify_parameters_client_ = this->create_client<rcl_interfaces::srv::GetParameters>(launch_service_name);
+
+  std::string sys_info_service_name ="/sim/get_system_info";
+  sys_info_client_ = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(sys_info_service_name);
+
   timer_ = this->create_wall_timer(
       100ms, std::bind(&StarlingOffboard::TimerCallback, this));
 
@@ -200,6 +206,8 @@ void StarlingOffboard::GetSystemInfo() {
    //   }
    // RCLCPP_WARN(this->get_logger(), "Received system info");
    //
+  using async_pac_gnn_interfaces::srv::SystemInfo;
+  using ServiceResponseFuture = rclcpp::Client<SystemInfo>::SharedFutureWithRequest;
 
   if (sys_req_pending_) {
       return;
@@ -207,8 +215,8 @@ void StarlingOffboard::GetSystemInfo() {
   if (system_info_received_) {
       return;
   }
-  auto request = std::make_shared<async_pac_gnn_interfaces::srv::SystemInfo::Request>();
-  request->name = std::string("starling_offboard");
+  auto request = std::make_shared<SystemInfo::Request>();
+  request->name = "starling_offboard";
   RCLCPP_INFO(this->get_logger(), "Request name set to: '%s'", request->name.c_str());
 
   if (!sys_info_client_){
@@ -216,20 +224,17 @@ void StarlingOffboard::GetSystemInfo() {
   }
 
   sys_req_pending_ = true;
-  sys_info_client_->async_send_request(
+  auto future = sys_info_client_->async_send_request(
     request,
-    [this](rclcpp::Client<async_pac_gnn_interfaces::srv::SystemInfo>::SharedFuture future){
+    [this](ServiceResponseFuture future) {
       RCLCPP_ERROR(this->get_logger(), "Sys info callback");
       try {
         sys_req_pending_ = false;
         auto result = future.get();
-        if (!result) {
-          RCLCPP_ERROR(this->get_logger(), "Sysinfo result is null");
-          return;
-        }
-        vel_scale_factor_ = result->velocity_scale_factor;
-        env_scale_factor_ = result->env_scale_factor;
-        params_.world_size = static_cast<double>(result->world_size);
+        auto response = result.second;
+        vel_scale_factor_ = response->velocity_scale_factor;
+        env_scale_factor_ = response->env_scale_factor;
+        params_.world_size = static_cast<double>(response->world_size);
         system_info_received_ = true;
       } 
       catch (const std::exception &e) {
@@ -237,6 +242,7 @@ void StarlingOffboard::GetSystemInfo() {
       }
     }
   );
+  RCLCPP_INFO(this->get_logger(), "Request sent, future valid: %s", future.valid() ? "true" : "false");
 }
 
 void StarlingOffboard::GetLaunchGPS() {
@@ -450,10 +456,6 @@ void StarlingOffboard::TimerCallback() {
   switch (state_) {
     case State::INIT_START: {
       // Services
-      std::string launch_service_name = "gps_fix/get_parameters";
-      homify_parameters_client_ = this->create_client<rcl_interfaces::srv::GetParameters>(launch_service_name);
-      std::string sys_info_service_name ="/sim/get_system_info";
-      sys_info_client_ = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(sys_info_service_name);
       InitializeSubscribers();
       InitializePublishers();
       RCLCPP_WARN(this->get_logger(), "Initialized pubs and subs");
@@ -999,7 +1001,8 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
 int main(int argc, char* argv[]) {
   setvbuf(stdout, NULL, _IONBF, BUFSIZ);
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<StarlingOffboard>());
+  auto node = std::make_shared<StarlingOffboard>();
+  rclcpp::spin(node);
   rclcpp::shutdown();
   return 0;
 }
