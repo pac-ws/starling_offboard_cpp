@@ -104,6 +104,7 @@ class StarlingOffboard : public rclcpp::Node {
   rclcpp::Client<async_pac_gnn_interfaces::srv::SystemInfo>::SharedPtr sys_info_client_;
 
   bool gps_received_ = false;
+  bool gps_req_pending_ = false;
   bool origin_gps_received_ = false;
   bool mission_control_received_ = false;
 
@@ -159,6 +160,7 @@ class StarlingOffboard : public rclcpp::Node {
   double fence_y_min_;
   double fence_y_max_;
 
+  bool sys_req_pending_ = false;
   bool system_info_received_ = false;
   double env_scale_factor_;
   double vel_scale_factor_;
