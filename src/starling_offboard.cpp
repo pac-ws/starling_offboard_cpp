@@ -27,7 +27,6 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   timer_ = this->create_wall_timer(
       100ms, std::bind(&StarlingOffboard::TimerCallback, this));
 
-
   RCLCPP_WARN(this->get_logger(), "Initialized Timers");
 }
 
@@ -215,20 +214,9 @@ void StarlingOffboard::GetSystemInfo() {
   if (system_info_received_) {
       return;
   }
-  auto request = std::make_shared<SystemInfo::Request>();
-  request->name = "starling_offboard";
-  RCLCPP_INFO(this->get_logger(), "Request name set to: '%s'", request->name.c_str());
 
-  if (!sys_info_client_){
-      RCLCPP_ERROR(this->get_logger(), "sys info client is null");
-  }
-
-  sys_req_pending_ = true;
-  auto future = sys_info_client_->async_send_request(
-    request,
-    [this](ServiceResponseFuture future) {
-      RCLCPP_ERROR(this->get_logger(), "Sys info callback");
-      try {
+  auto get_system_info_cb =
+      [this](ServiceResponseFuture future) {
         sys_req_pending_ = false;
         auto result = future.get();
         auto response = result.second;
@@ -236,50 +224,18 @@ void StarlingOffboard::GetSystemInfo() {
         env_scale_factor_ = response->env_scale_factor;
         params_.world_size = static_cast<double>(response->world_size);
         system_info_received_ = true;
-      } 
-      catch (const std::exception &e) {
-        RCLCPP_ERROR(this->get_logger(), "Exception thrown: %s", e.what());
-      }
-    }
-  );
+      };
+
+  auto request = std::make_shared<SystemInfo::Request>();
+  request->name = "starling_offboard";
+  RCLCPP_INFO(this->get_logger(), "Request name set to: '%s'", request->name.c_str());
+
+  sys_req_pending_ = true;
+  auto future = sys_info_client_->async_send_request(request, std::move(get_system_info_cb));
   RCLCPP_INFO(this->get_logger(), "Request sent, future valid: %s", future.valid() ? "true" : "false");
 }
 
 void StarlingOffboard::GetLaunchGPS() {
-  //std::string service_name = "gps_fix/get_parameters";
-  //auto homify_parameters_client =
-  //    this->create_client<rcl_interfaces::srv::GetParameters>(service_name);
-  //while (!homify_parameters_client->wait_for_service(1s)) {
-  //  if (!rclcpp::ok()) {
-  //    rclcpp::shutdown();
-  //  }
-  //}
-  //while (!gps_received_) {
-  //  auto request =
-  //      std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
-  //  request->names = {"launch_gps"};
-  //  auto result_future = homify_parameters_client->async_send_request(request);
-  //  if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
-  //                                         result_future) !=
-  //      rclcpp::FutureReturnCode::SUCCESS) {
-  //    rclcpp::sleep_for(1s);
-  //    continue;
-  //  }
-  //  auto result = result_future.get();
-  //  if (result->values.size() == 0) {
-  //    rclcpp::sleep_for(1s);
-  //    continue;
-  //  }
-  //  std::vector<double> launch_gps = result->values[0].double_array_value;
-  //  launch_gps_lat_ = launch_gps[0];
-  //  launch_gps_lon_ = launch_gps[1];
-  //  yaw_ = launch_gps[2];
-  //  // Flip z-axis to match mission frame
-  //  alt_offset_ =  std::max(-launch_gps[3], 0.0);
-  //  gps_received_ = true;
-  //}
-  //
-  //
   if (gps_req_pending_) {
       return;
   }
