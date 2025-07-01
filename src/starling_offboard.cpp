@@ -1,5 +1,6 @@
 #include "starling_offboard_cpp/starling_offboard.hpp"
 
+namespace pac_ws::starling_offboard {
 StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   clock_ = std::make_shared<rclcpp::Clock>();
   time_last_vel_update_ = clock_->now();
@@ -12,17 +13,16 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
       rclcpp::QoSInitialization(qos_profile.history, params_.buffer_size),
       qos_profile);
 
-  // z_takeoff is the altitude set by the user
-  // alt_offset_'s value is produced by homify to account for altitude offsets on the ground.
-  RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
-  takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
   land_vel_[2] = params_.land_vel_z;
 
-  std::string launch_service_name = "gps_fix/get_parameters";
-  homify_parameters_client_ = this->create_client<rcl_interfaces::srv::GetParameters>(launch_service_name);
+  // z_takeoff is the altitude set by the user
+  // alt_offset_'s value is produced by homify to account for altitude offsets on the ground.
+  // RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
+  // takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
 
-  std::string sys_info_service_name ="/sim/get_system_info";
-  sys_info_client_ = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(sys_info_service_name);
+  GetLaunchGPS();
+  GetMissionOriginGPS();
+  GetSystemInfo();
 
   timer_ = this->create_wall_timer(
       intervals_.Mid, std::bind(&StarlingOffboard::TimerCallback, this));
@@ -88,241 +88,6 @@ void StarlingOffboard::InitializeGeofence(){
   RCLCPP_INFO(this->get_logger(), "Dimensions (L, R, B, T): %f, %f, %f, %f", fence_x_min_, fence_x_max_, fence_y_min_, fence_y_max_);
 }
 
-void StarlingOffboard::GetMissionControl(){
-  sync_parameters_client_ = std::make_shared<rclcpp::SyncParametersClient>(this, "/mission_control");
-  while (!sync_parameters_client_->wait_for_service(intervals_.Mid)) {
-    if (!rclcpp::ok()) {
-      RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for the service. Exiting.");
-      rclcpp::shutdown();
-    }
-    RCLCPP_INFO(this->get_logger(), "service not available, waiting again...");
-  }
-  
-  auto result = sync_parameters_client_->get_parameters({"offboard_enable", "takeoff", "land", "geofence"});
-  RCLCPP_DEBUG(this->get_logger(), "result size = %ld", result.size());
-  for (auto &p : result) {
-    if (p.get_name() == "offboard_enable") {
-      offboard_enable_ = p.get_value<bool>();
-      RCLCPP_INFO(this->get_logger(), "init offboard_enable = %d", offboard_enable_);
-    }
-    if (p.get_name() == "takeoff") {
-      takeoff_ = p.get_value<bool>();
-      RCLCPP_INFO(this->get_logger(), "init takeoff = %d", takeoff_);
-    }
-    if (p.get_name() == "land") {
-      land_ = p.get_value<bool>();
-      RCLCPP_INFO(this->get_logger(), "init land = %d", land_);
-    }
-    if (p.get_name() == "geofence") {
-      geofence_ = p.get_value<bool>();
-      RCLCPP_INFO(this->get_logger(), "init geofence = %d", geofence_);
-    }
-  }
-  
-  mission_control_PEH_ptr_ =
-      std::make_shared<rclcpp::ParameterEventHandler>(this);
-  
-  auto cb_offboard_enable = [this](const rclcpp::Parameter& p) {
-    offboard_enable_ = p.get_value<bool>();
-    RCLCPP_INFO(this->get_logger(), "received offboard_enable = %d", offboard_enable_);
-  };
-  auto cb_takeoff = [this](const rclcpp::Parameter& p) {
-    takeoff_ = p.get_value<bool>();
-    RCLCPP_INFO(this->get_logger(), "received takeoff = %d", takeoff_);
-  };
-  auto cb_land = [this](const rclcpp::Parameter& p) {
-    land_ = p.get_value<bool>();
-    RCLCPP_INFO(this->get_logger(), "received land = %d", land_);
-  };
-  auto cb_geofence = [this](const rclcpp::Parameter& p) {
-    geofence_ = p.get_value<bool>();
-    RCLCPP_INFO(this->get_logger(), "received geofence = %d", geofence_);
-  };
-  handle_offboard_enable_= mission_control_PEH_ptr_->add_parameter_callback(
-      "offboard_enable", cb_offboard_enable, "/mission_control");
-  handle_takeoff_= mission_control_PEH_ptr_->add_parameter_callback(
-      "takeoff", cb_takeoff, "/mission_control");
-  handle_land_= mission_control_PEH_ptr_->add_parameter_callback(
-      "land", cb_land, "/mission_control");
-  handle_geofence_ = mission_control_PEH_ptr_->add_parameter_callback(
-      "geofence", cb_geofence, "/mission_control");
-}
-
-void StarlingOffboard::GetMissionOriginGPS() {
-  std::string service_name = "/mission_origin_gps/get_parameters";
-  auto mission_origin_parameters_client =
-      this->create_client<rcl_interfaces::srv::GetParameters>(service_name);
-  while (!mission_origin_parameters_client->wait_for_service(intervals_.Mid)) {
-    if (!rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
-  }
-  auto request =
-      std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
-  request->names = {"mission_origin_lat", "mission_origin_lon", "heading"};
-  while (!origin_gps_received_) {
-    auto result_future = mission_origin_parameters_client->async_send_request(request);
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
-                                           result_future) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-      rclcpp::sleep_for(intervals_.Mid);
-      continue;
-    }
-    auto result = result_future.get();
-    if (result->values.size() == 0) {
-      rclcpp::sleep_for(intervals_.Mid);
-      continue;
-    }
-    mission_origin_lat_ = result->values[0].double_value;
-    mission_origin_lon_ = result->values[1].double_value;
-    heading_ = result->values[2].double_value;
-    origin_gps_received_ = true;
-  }
-}
-
-
-void StarlingOffboard::GetSystemInfo() {
-   //   std::string service_name = "/sim/get_system_info";
-   //   auto client = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(service_name);
-   //   while (!client->wait_for_service(1s)) {
-   //       if (!rclcpp::ok()) {
-   //           rclcpp::shutdown();
-   //       }
-   //   }
-   //   while(!system_info_received_){
-   //       auto request = std::make_shared<async_pac_gnn_interfaces::srv::SystemInfo::Request>();
-   //       request->name = "starling_offboard";
-   //       auto result_future = client->async_send_request(request);
-   //       if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) != rclcpp::FutureReturnCode::SUCCESS) {
-   //           rclcpp::sleep_for(1s);
-   //           continue;
-   //       }
-   //       auto result = result_future.get();
-   //       vel_scale_factor_ = result->velocity_scale_factor;
-   //       env_scale_factor_ = result->env_scale_factor;
-   //       params_.world_size = static_cast<double>(result->world_size);
-   //       system_info_received_ = true;
-   //   }
-   // RCLCPP_WARN(this->get_logger(), "Received system info");
-   //
-  using async_pac_gnn_interfaces::srv::SystemInfo;
-  using ServiceResponseFuture = rclcpp::Client<SystemInfo>::SharedFutureWithRequest;
-
-  if (sys_req_pending_) {
-      return;
-  }
-  if (system_info_received_) {
-      return;
-  }
-
-  auto get_system_info_cb =
-      [this](ServiceResponseFuture future) {
-        sys_req_pending_ = false;
-        auto result = future.get();
-        auto response = result.second;
-        vel_scale_factor_ = response->velocity_scale_factor;
-        env_scale_factor_ = response->env_scale_factor;
-        params_.world_size = static_cast<double>(response->world_size);
-        system_info_received_ = true;
-      };
-
-  auto request = std::make_shared<SystemInfo::Request>();
-  request->name = "starling_offboard";
-  RCLCPP_INFO(this->get_logger(), "Request name set to: '%s'", request->name.c_str());
-
-  sys_req_pending_ = true;
-  auto future = sys_info_client_->async_send_request(request, std::move(get_system_info_cb));
-  RCLCPP_INFO(this->get_logger(), "Request sent, future valid: %s", future.valid() ? "true" : "false");
-}
-
-void StarlingOffboard::GetLaunchGPS() {
-  if (gps_req_pending_) {
-      return;
-  }
-
-  if (gps_received_) {
-    return;
-  }
-  
-  gps_req_pending_ = true;
-  auto request = std::make_shared<rcl_interfaces::srv::GetParameters::Request>();
-  request->names = {"launch_gps"};
-
-  homify_parameters_client_->async_send_request(
-    request,
-    [this](rclcpp::Client<rcl_interfaces::srv::GetParameters>::SharedFuture future){
-      gps_req_pending_ = false;
-      try {
-        auto result = future.get();         
-        if (result->values.size() == 0) {
-            return;
-        }
-        std::vector<double> launch_gps = result->values[0].double_array_value;
-        launch_gps_lat_ = launch_gps[0];
-        launch_gps_lon_ = launch_gps[1];
-        yaw_ = launch_gps[2];
-        // Flip z-axis to match mission frame
-        alt_offset_ =  std::max(-launch_gps[3], 0.0);
-        gps_received_ = true;
-      }
-      catch(const std::exception &e){
-        RCLCPP_ERROR(this->get_logger(), "Exception thrown: %s", e.what());
-      }
-    }
-  );
-}
-
-void StarlingOffboard::ComputeTransforms() {
-  // Compute the translation from the home position to the current (start
-  // up position)
-  double distance;
-  double azimuth_origin_to_target;
-  double azimuth_target_to_origin;
-
-  const GeographicLib::Geodesic geod = GeographicLib::Geodesic::WGS84();
-  geod.Inverse(mission_origin_lat_, mission_origin_lon_, launch_gps_lat_,
-               launch_gps_lon_, distance, azimuth_origin_to_target,
-               azimuth_target_to_origin);
-
-  // RCLCPP_INFO(this->get_logger(), "Distance to origin: %f", distance);
-  // RCLCPP_INFO(this->get_logger(), "Azimuth origin to target: %f",
-  //             azimuth_origin_to_target);
-  // RCLCPP_INFO(this->get_logger(), "Azimuth target to origin: %f",
-  //             azimuth_target_to_origin);
-
-  double x = distance * cos(azimuth_origin_to_target * M_PI / 180.0);
-  double y = distance * sin(azimuth_origin_to_target * M_PI / 180.0);
-  double z = 0.0;
-
-  Eigen::Matrix3d rot_mat_z =
-      Eigen::AngleAxisd(3. * M_PI / 2. - heading_, Eigen::Vector3d::UnitZ())
-          .toRotationMatrix();
-  Eigen::Matrix3d rot_mat_x =
-      Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
-
-  Eigen::Matrix3d rot_mat = rot_mat_x * rot_mat_z;
-
-  T_ned_miss_.block<3, 3>(0, 0) = rot_mat;
-  T_miss_ned_.block<3, 3>(0, 0) = T_ned_miss_.block<3, 3>(0, 0).transpose();
-
-  Eigen::Vector3d translation = Eigen::Vector3d(x, y, z);
-  T_miss_ned_.block<3, 1>(0, 3) = -translation;
-
-  T_ned_miss_ = T_miss_ned_.inverse();
-
-
-  // Testing of the transformations
-  assert(
-      (T_miss_ned_ * T_ned_miss_).isApprox(Eigen::Matrix4d::Identity(), 0.001));
-
-  RCLCPP_DEBUG(this->get_logger(), "T_miss_ned:\n%s",
-              EigenMatToStr(T_miss_ned_).c_str());
-  RCLCPP_DEBUG(this->get_logger(), "T_ned_miss:\n%s",
-              EigenMatToStr(T_ned_miss_).c_str());
-
-  RCLCPP_DEBUG(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
-}
-
 void StarlingOffboard::InitializeSubscribers() {
   subs_.vehicle_status =
       this->create_subscription<px4_msgs::msg::VehicleStatus>(
@@ -354,22 +119,22 @@ void StarlingOffboard::InitializeSubscribers() {
               [this](const px4_msgs::msg::SensorGps::SharedPtr msg) {
                 gps_pos_msg_ = *msg;
               });
-  subs_.mission_origin_gps = 
-      this->create_subscription<geometry_msgs::msg::Point>(
-              "/mission_origin_gps", qos_,
-              [this](const geometry_msgs::msg::Point::SharedPtr msg) {
-                mission_origin_lon_ = msg->x;
-                mission_origin_lat_ = msg->y;
-                heading_ = msg->z;
-                origin_gps_received_ = true;
-              });
+  // subs_.mission_origin_gps = 
+  //     this->create_subscription<geometry_msgs::msg::Point>(
+  //             "/mission_origin_gps", qos_,
+  //             [this](const geometry_msgs::msg::Point::SharedPtr msg) {
+  //               mission_origin_lon_ = msg->x;
+  //               mission_origin_lat_ = msg->y;
+  //               heading_ = msg->z;
+  //               origin_gps_received_ = true;
+  //             });
   subs_.mission_control = 
       this->create_subscription<async_pac_gnn_interfaces::msg::MissionControl>(
               "/mission_control", 10,
               [this](const async_pac_gnn_interfaces::msg::MissionControl::SharedPtr msg) {
-                offboard_enable_ = msg->offboard_enable;
-                takeoff_ = msg->takeoff;
-                land_ = msg->land;
+                ob_enable_ = msg->ob_enable;
+                ob_takeoff_ = msg->ob_takeoff;
+                ob_land_ = msg->ob_land;
                 geofence_ = msg->geofence;
                 mission_control_received_ = true;
               });
@@ -404,8 +169,15 @@ void StarlingOffboard::InitializePublishers() {
 void StarlingOffboard::TimerCallback() {
 
   // Geofence check
-  if (init_done_) {
-    GeofenceCheck();
+  if(geofence_) {
+    if (geofence_is_set_) {
+      GeofenceCheck();
+    } else {
+      if (system_info_sc_->Done()) {
+        InitializeGeofence();
+        geofence_is_set_ = true;
+      }
+    }
   }
 
   // State Machine
@@ -419,38 +191,10 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::INIT_GPS: {
-      if (homify_parameters_client_->wait_for_service(intervals_.Short)) {
-        GetLaunchGPS();
-        if (gps_received_) {
-          RCLCPP_WARN(this->get_logger(), "Launch GPS received");
-          state_ = State::INIT_SYS;
-        }
+      if (launch_gps_sc_->Done()) {
+        RCLCPP_INFO(this->get_logger(), "Launch GPS received");
+        state_ = State::IDLE;
       }
-      else{;
-          RCLCPP_ERROR_ONCE(this->get_logger(), "Parameter service not available. Trying again");
-      }
-      break;
-    }
-
-    case State::INIT_SYS: {
-      if (sys_info_client_->wait_for_service(intervals_.Short)) {
-        GetSystemInfo();
-        if (system_info_received_) {
-          RCLCPP_WARN(this->get_logger(), "System info received from GCS");
-          RCLCPP_WARN(this->get_logger(), "Environment scale factor: %f", env_scale_factor_);
-          state_ = State::INIT_FIN;
-        }
-      }
-      else{
-          RCLCPP_ERROR(this->get_logger(), "System info service not available. Trying again.");
-      }
-      break;
-    }
-
-    case State::INIT_FIN: {
-      InitializeGeofence();
-      init_done_ = true;
-      state_ = State::IDLE;
       break;
     }
 
@@ -464,7 +208,7 @@ void StarlingOffboard::TimerCallback() {
       }
       RCLCPP_INFO_ONCE(this->get_logger(), "Mission control received.");
 
-      if (!origin_gps_received_) {
+      if (!mission_origin_gps_sc_->Done()) {
           RCLCPP_WARN_ONCE(this->get_logger(), "Waiting for mission origin GPS...");
           break;
       }
@@ -482,36 +226,7 @@ void StarlingOffboard::TimerCallback() {
       RCLCPP_DEBUG(this->get_logger(), "lon: %.8f", launch_gps_lon_);
 
       ComputeTransforms();
-
-      Eigen::Vector4d current_mission_pos =
-          TransformVec(Eigen::Vector4d(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0),
-                       T_ned_miss_);
-      RCLCPP_INFO(this->get_logger(), "Current mission pos: %f, %f, %f",
-                  current_mission_pos[0], current_mission_pos[1],
-                  current_mission_pos[2]);
-
-      takeoff_pos_[0] = current_mission_pos[0];
-      takeoff_pos_[1] = current_mission_pos[1];
-
-      takeoff_pos_ned_ = TransformVec(takeoff_pos_, T_miss_ned_);
-
-      RCLCPP_DEBUG(this->get_logger(), "Takeoff pos (miss): %f, %f, %f",
-                  takeoff_pos_[0], takeoff_pos_[1], takeoff_pos_[2]);
-      RCLCPP_DEBUG(this->get_logger(), "Takeoff pos (ned): %f, %f, %f",
-                  takeoff_pos_ned_[0], takeoff_pos_ned_[1],
-                  takeoff_pos_ned_[2]);
-
-      Eigen::Vector4d takeoff_pos_check =
-          TransformVec(takeoff_pos_ned_, T_ned_miss_);
-      RCLCPP_DEBUG(this->get_logger(), "Takeoff pos check: %f, %f, %f",
-                  takeoff_pos_check[0], takeoff_pos_check[1],
-                  takeoff_pos_check[2]);
-
-      assert(TransformVec(takeoff_pos_ned_, T_ned_miss_)
-                 .isApprox(takeoff_pos_, 0.1));
-
-      start_pos_ned_[0] = takeoff_pos_ned_[0];
-      start_pos_ned_[1] = takeoff_pos_ned_[1];
+      ComputeStartPosTakeoff();
 
       RCLCPP_WARN_ONCE(this->get_logger(), "kP: %f", params_.kP);
 
@@ -521,8 +236,10 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::PREFLT:
-      if (takeoff_ && offboard_enable_) {
-
+      if (ob_takeoff_ && ob_enable_) {
+        if (geofence_ && !geofence_is_set_) {
+          RCLCPP_WARN(this->get_logger(), "Geofence is requested but not set. Will not arm. Is get_system_info service available?");
+        }
         state_ = State::ARMING;
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
         RCLCPP_DEBUG(this->get_logger(), "yaw_: %f", yaw_);
@@ -563,7 +280,8 @@ void StarlingOffboard::TimerCallback() {
 
     case State::TAKEOFF:
       // error calculation
-      takeoff_completed_ = this->HasReachedPos(takeoff_pos_ned_);
+      takeoff_completed_ = 
+        HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
 
       if (takeoff_completed_) {
         PubOffboardControlMode(ControlMode::VEL);
@@ -581,7 +299,7 @@ void StarlingOffboard::TimerCallback() {
     
     // GNN, Square, etc..
     case State::MISSION: {
-      if (land_) {
+      if (ob_land_) {
         state_ = State::LANDING_H;
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
         RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
@@ -598,7 +316,7 @@ void StarlingOffboard::TimerCallback() {
       if (duration.seconds() > 1.0) {
         double err_z = (pos_msg_.z + params_.z_takeoff);
         stop_vel_[2] = -1.0 * err_z;
-        ClampVelocity(stop_vel_);
+        ClampVelocity(params_.max_speed, stop_vel_);
         PubTrajSetpointVel(stop_vel_);
         //RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
       }
@@ -612,7 +330,8 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::LANDING_H:
-      reached_land_pos_h_ = this->HasReachedPos(takeoff_pos_ned_);
+      reached_land_pos_h_ = 
+        HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
       if (reached_land_pos_h_) {
         state_ = State::LANDING_V;
         RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
@@ -627,7 +346,8 @@ void StarlingOffboard::TimerCallback() {
 
     case State::LANDING_V:
       // Check both position and velocity to ensure the drone has landed
-      reached_land_pos_v_ = this->HasReachedPos(start_pos_ned_);
+      reached_land_pos_v_ =
+        HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
       reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
 
       if (reached_land_pos_v_ && reached_land_stationary_v_) {
@@ -711,35 +431,6 @@ void StarlingOffboard::PathPublisherTimerCallback() {
 }
 
 /**
- * @brief Compute the velocity to reach the target position
- */
-Eigen::Vector4d StarlingOffboard::ComputeVel(
-    const Eigen::Vector4d& target_pos) {
-  const double kP = 1.0;
-
-  const double err_x = (pos_msg_.x - target_pos[0]);
-  const double err_y = (pos_msg_.y - target_pos[1]);
-  const double err_z = (pos_msg_.z - target_pos[2]);
-
-  Eigen::Vector4d vel;
-  vel << -kP * err_x, -kP * err_y, -kP * err_z, 0.0;
-  return vel;
-}
-
-/**
- * @brief Check if the drone has reached the target position within tolerance
- */
-bool StarlingOffboard::HasReachedPos(const Eigen::Vector4d& target_pos) {
-  const double err_x = std::abs(pos_msg_.x - target_pos[0]);
-  const double err_y = std::abs(pos_msg_.y - target_pos[1]);
-  const double err_z = std::abs(pos_msg_.z - target_pos[2]);
-
-  return err_x < params_.position_tolerance &&
-         err_y < params_.position_tolerance &&
-         err_z < params_.position_tolerance;
-}
-
-/**
  * @brief Send a command to Arm the vehicle
  */
 void StarlingOffboard::Arm() {
@@ -808,7 +499,7 @@ void StarlingOffboard::PubOffboardControlMode(const StarlingOffboard::ControlMod
   msg.attitude = false;
   msg.body_rate = false;
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (offboard_enable_) {
+  if (ob_enable_) {
     pubs_.offboard_control_mode->publish(msg);
   }
 }
@@ -820,7 +511,7 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
   TrajectorySetpoint msg{};
   msg.position = {std::nanf(""), std::nanf(""),
                   std::nanf("")};  // required for vel control in px4
-  if (offboard_enable_ && !breach_) {
+  if (ob_enable_ && !breach_) {
       msg.velocity = {static_cast<float>(target_vel[0]),
                       static_cast<float>(target_vel[1]),
                       static_cast<float>(target_vel[2])
@@ -848,7 +539,7 @@ void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
                   static_cast<float>(target_pos[2])};
   msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  if (offboard_enable_) {
+  if (ob_enable_) {
     pubs_.traj_setpoint->publish(msg);
   }
 }
@@ -875,7 +566,7 @@ void StarlingOffboard::UpdateVel(
 
   // Transform the velocity from the mission frame to NED
   vel_ned_ = TransformVec(vel_mission, T_miss_ned_);
-  ClampVelocity(vel_ned_);
+  ClampVelocity(params_.max_speed, vel_ned_);
   time_last_vel_update_ = clock_->now();
 }
 
@@ -952,11 +643,12 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
       static_cast<uint64_t>(this->get_clock()->now().nanoseconds() / 1000);
   pubs_.vehicle_command->publish(msg);
 }
+}  // namespace pac_ws::starling_offboard
 
 int main(int argc, char* argv[]) {
   setvbuf(stdout, NULL, _IONBF, BUFSIZ);
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<StarlingOffboard>();
+  auto node = std::make_shared<pac_ws::starling_offboard::StarlingOffboard>();
   rclcpp::spin(node);
   rclcpp::shutdown();
   return 0;

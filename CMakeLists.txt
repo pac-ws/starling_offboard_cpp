@@ -44,7 +44,7 @@ set(target_dependencies
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-add_executable(starling_offboard_cpp src/starling_offboard.cpp)
+add_executable(starling_offboard_cpp src/starling_offboard.cpp src/transforms.cpp src/service_manager.cpp)
 ament_target_dependencies(starling_offboard_cpp  ${target_dependencies})
 target_link_libraries(starling_offboard_cpp Eigen3::Eigen)
 install(TARGETS starling_offboard_cpp DESTINATION lib/${PROJECT_NAME})
