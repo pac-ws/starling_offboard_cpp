@@ -25,7 +25,7 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   sys_info_client_ = this->create_client<async_pac_gnn_interfaces::srv::SystemInfo>(sys_info_service_name);
 
   timer_ = this->create_wall_timer(
-      100ms, std::bind(&StarlingOffboard::TimerCallback, this));
+      intervals_.Mid, std::bind(&StarlingOffboard::TimerCallback, this));
 
   RCLCPP_WARN(this->get_logger(), "Initialized Timers");
 }
@@ -90,7 +90,7 @@ void StarlingOffboard::InitializeGeofence(){
 
 void StarlingOffboard::GetMissionControl(){
   sync_parameters_client_ = std::make_shared<rclcpp::SyncParametersClient>(this, "/mission_control");
-  while (!sync_parameters_client_->wait_for_service(1s)) {
+  while (!sync_parameters_client_->wait_for_service(intervals_.Mid)) {
     if (!rclcpp::ok()) {
       RCLCPP_ERROR(this->get_logger(), "Interrupted while waiting for the service. Exiting.");
       rclcpp::shutdown();
@@ -152,7 +152,7 @@ void StarlingOffboard::GetMissionOriginGPS() {
   std::string service_name = "/mission_origin_gps/get_parameters";
   auto mission_origin_parameters_client =
       this->create_client<rcl_interfaces::srv::GetParameters>(service_name);
-  while (!mission_origin_parameters_client->wait_for_service(1s)) {
+  while (!mission_origin_parameters_client->wait_for_service(intervals_.Mid)) {
     if (!rclcpp::ok()) {
       rclcpp::shutdown();
     }
@@ -165,12 +165,12 @@ void StarlingOffboard::GetMissionOriginGPS() {
     if (rclcpp::spin_until_future_complete(this->get_node_base_interface(),
                                            result_future) !=
         rclcpp::FutureReturnCode::SUCCESS) {
-      rclcpp::sleep_for(1s);
+      rclcpp::sleep_for(intervals_.Mid);
       continue;
     }
     auto result = result_future.get();
     if (result->values.size() == 0) {
-      rclcpp::sleep_for(1s);
+      rclcpp::sleep_for(intervals_.Mid);
       continue;
     }
     mission_origin_lat_ = result->values[0].double_value;
@@ -395,7 +395,7 @@ void StarlingOffboard::InitializePublishers() {
       this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(
           "fmu/in/trajectory_setpoint", params_.buffer_size);
   status_timer_ = this->create_wall_timer(
-      1000ms, std::bind(&StarlingOffboard::StatusTimerCallback, this));
+      intervals_.Long, std::bind(&StarlingOffboard::StatusTimerCallback, this));
 }
 
 /**
@@ -411,7 +411,6 @@ void StarlingOffboard::TimerCallback() {
   // State Machine
   switch (state_) {
     case State::INIT_START: {
-      // Services
       InitializeSubscribers();
       InitializePublishers();
       RCLCPP_WARN(this->get_logger(), "Initialized pubs and subs");
@@ -420,7 +419,7 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::INIT_GPS: {
-      if (homify_parameters_client_->wait_for_service(1s)) {
+      if (homify_parameters_client_->wait_for_service(intervals_.Short)) {
         GetLaunchGPS();
         if (gps_received_) {
           RCLCPP_WARN(this->get_logger(), "Launch GPS received");
@@ -434,7 +433,7 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::INIT_SYS: {
-      if (sys_info_client_->wait_for_service(1s)) {
+      if (sys_info_client_->wait_for_service(intervals_.Short)) {
         GetSystemInfo();
         if (system_info_received_) {
           RCLCPP_WARN(this->get_logger(), "System info received from GCS");

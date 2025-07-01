@@ -32,8 +32,8 @@
 #include <string>
 #include <string_view>
 
-using namespace std::chrono;
-using namespace std::chrono_literals;
+// using namespace std::chrono;
+// using namespace std::chrono_literals;
 using namespace px4_msgs::msg;
 
 class StarlingOffboard : public rclcpp::Node {
@@ -165,6 +165,13 @@ class StarlingOffboard : public rclcpp::Node {
   double env_scale_factor_;
   double vel_scale_factor_;
 
+  struct Intervals {
+    std::chrono::milliseconds Short{30};
+    std::chrono::milliseconds Mid{100};
+    std::chrono::milliseconds Long{1000};
+    std::chrono::milliseconds VLong{2000};
+  };
+  Intervals intervals_;
   // Parameters
   struct Params {
     size_t buffer_size;
