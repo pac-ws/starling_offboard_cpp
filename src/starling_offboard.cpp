@@ -550,7 +550,6 @@ void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
 void StarlingOffboard::UpdateVel(
   const geometry_msgs::msg::TwistStamped::SharedPtr cmd_vel) {
   // Proportional controller to maintain altitude
-  const double kP = 1.0;
   const double err_z = (params_.z_takeoff + pos_msg_.z);
 
   // const Eigen::Vector4d vel_mission (
@@ -561,7 +560,7 @@ void StarlingOffboard::UpdateVel(
   //                           -2.0, 2.0), 1.0);
   const Eigen::Vector4d vel_mission(cmd_vel->twist.linear.x,
                                     cmd_vel->twist.linear.y, 
-                                    kP * err_z, 
+                                    params_.kP * err_z, 
                                     0.0);
 
   // Transform the velocity from the mission frame to NED
