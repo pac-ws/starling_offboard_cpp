@@ -10,6 +10,9 @@
 #include <cmath>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
+#include <tf2_eigen/tf2_eigen.hpp>
+#include <tf2_msgs/msg/tf_message.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <iostream>
 #include <ament_index_cpp/get_package_prefix.hpp>
 #include <async_pac_gnn_interfaces/msg/robot_status.hpp>
@@ -67,7 +70,7 @@ class StarlingOffboard : public rclcpp::Node {
 
   // bool origin_gps_received_ = false;
   bool mission_control_received_ = false;
-
+  bool tf_tag_cam_received_ = false;
   bool takeoff_completed_ = false;
   bool reached_land_pos_h_ = false;
   bool reached_land_pos_v_ = false;
@@ -87,6 +90,11 @@ class StarlingOffboard : public rclcpp::Node {
 
   Eigen::Matrix<double, 4, 4> T_miss_ned_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_ned_miss_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_ned_tag_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_tag_ned_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_tag_cam_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_cam_tag_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_cam_ned_ = Eigen::Matrix4d::Identity();
 
   State state_ = State::INIT_START;
 
@@ -112,6 +120,7 @@ class StarlingOffboard : public rclcpp::Node {
   px4_msgs::msg::SensorGps gps_pos_msg_;
   px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
   geometry_msgs::msg::PoseStamped gnn_pose_;
+  tf2_msgs::msg::TFMessage tf_tag_cam_msg_;
 
   rclcpp::QoS qos_;
 
@@ -142,6 +151,8 @@ class StarlingOffboard : public rclcpp::Node {
   void InitializePublishers();
   void ComputeTransforms();
   void ComputeStartPosTakeoff();
+  void ComputeTagNedTransform();
+  void ComputeNedCamTransform();
   void Arm();
   void Disarm();
   void GeofenceCheck();

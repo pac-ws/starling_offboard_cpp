@@ -37,6 +37,7 @@ struct Subscriptions {
   rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr
       vehicle_global_pos;
   rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
+  rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr tf_tag_cam;
   rclcpp::Subscription<async_pac_gnn_interfaces::msg::MissionControl>::SharedPtr
       mission_control;
 };

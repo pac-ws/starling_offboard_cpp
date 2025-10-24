@@ -119,6 +119,15 @@ void StarlingOffboard::InitializeSubscribers() {
               [this](const px4_msgs::msg::SensorGps::SharedPtr msg) {
                 gps_pos_msg_ = *msg;
               });
+  subs_.tf_tag_cam =
+      this->create_subscription<tf2_msgs::msg::TFMessage>(
+          "tf", qos_,
+              [this](const tf2_msgs::msg::TFMessage::SharedPtr msg) {
+                tf_tag_cam_msg_ = *msg;
+                if (!tf_tag_cam_msg_.transforms.empty()) {
+                    tf_tag_cam_received_ = true;
+                }
+              });
   // subs_.mission_origin_gps = 
   //     this->create_subscription<geometry_msgs::msg::Point>(
   //             "/mission_origin_gps", qos_,
@@ -227,6 +236,7 @@ void StarlingOffboard::TimerCallback() {
 
       ComputeTransforms();
       ComputeStartPosTakeoff();
+      ComputeTagNedTransform();
 
       RCLCPP_WARN_ONCE(this->get_logger(), "kP: %f", params_.kP);
 
@@ -279,6 +289,9 @@ void StarlingOffboard::TimerCallback() {
     
 
     case State::TAKEOFF:
+      if (tf_tag_cam_received_){
+        ComputeNedCamTransform();
+      }
       // error calculation
       takeoff_completed_ = 
         HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
@@ -315,7 +328,7 @@ void StarlingOffboard::TimerCallback() {
       rclcpp::Duration duration = time_now - time_last_vel_update_;
       if (duration.seconds() > 1.0) {
         double err_z = (pos_msg_.z + params_.z_takeoff);
-        stop_vel_[2] = -1.0 * err_z;
+      stop_vel_[2] = -1.0 * err_z;
         ClampVelocity(params_.max_speed, stop_vel_);
         PubTrajSetpointVel(stop_vel_);
         //RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
@@ -345,21 +358,27 @@ void StarlingOffboard::TimerCallback() {
       break;
 
     case State::LANDING_V:
-      // Check both position and velocity to ensure the drone has landed
-      reached_land_pos_v_ =
-        HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
-      reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
+      if (tf_tag_cam_received_) {
+        // Fly to (0,0,0) in the fixed frame (defined by the april tag).
+        break;
+      }
+      else {
+        // Check both position and velocity to ensure the drone has landed
+        reached_land_pos_v_ =
+          HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
+        reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
 
-      if (reached_land_pos_v_ && reached_land_stationary_v_) {
-        state_ =  State::DISARM;
-        RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence finished");
-        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+        if (reached_land_pos_v_ && reached_land_stationary_v_) {
+          state_ =  State::DISARM;
+          RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence finished");
+          RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+        }
+        else{
+          PubOffboardControlMode(ControlMode::VEL);
+          PubTrajSetpointPos(land_vel_);
+        }
+        break;
       }
-      else{
-        PubOffboardControlMode(ControlMode::VEL);
-        PubTrajSetpointPos(land_vel_);
-      }
-      break;
 
     case State::DISARM:
       if (arming_state_ == 2) {

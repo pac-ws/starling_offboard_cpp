@@ -53,6 +53,27 @@ void StarlingOffboard::ComputeTransforms() {
   RCLCPP_DEBUG(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
 }
 
+void StarlingOffboard::ComputeTagNedTransform(){
+    // The AprilTag is located underneath the drone at takeoff.
+    // Assume that the front of the drone xB is aligned with -yT the top of the AprilTag
+    // Then T_tag_ned is defined by a rotation about the z-axis given by the heading.
+    Eigen::Matrix3d rot_mat_z = Eigen::AngleAxisd(M_PI - heading_, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    T_tag_ned_.block<3,3>(0,0) = rot_mat_z;
+    T_ned_tag_ = T_tag_ned_.inverse();
+}
+
+void StarlingOffboard::ComputeNedCamTransform(){
+    // We only compute the transform once the tag has been detected
+    if (!tf_tag_cam_received_) {
+        return;
+    }
+    geometry_msgs::msg::TransformStamped tag_cam = tf_tag_cam_msg_.transforms[0];
+    Eigen::Isometry3d iso = tf2::transformToEigen(tag_cam);
+    T_tag_cam_ = iso.matrix();
+    T_cam_tag_ = T_tag_cam_.inverse();
+    T_cam_ned_ = T_tag_ned_ * T_cam_tag_;
+}
+
 void StarlingOffboard::ComputeStartPosTakeoff() {
   Eigen::Vector4d current_mission_pos = TransformVec(
       Eigen::Vector4d(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0), T_ned_miss_);
