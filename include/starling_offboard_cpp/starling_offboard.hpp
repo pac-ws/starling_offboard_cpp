@@ -86,6 +86,7 @@ class StarlingOffboard : public rclcpp::Node {
   double mission_origin_lat_;
   double heading_;
 
+  double azimuth_ = 0.0;
   double yaw_;
   double alt_offset_;
 

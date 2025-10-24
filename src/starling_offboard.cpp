@@ -599,6 +599,7 @@ void StarlingOffboard::UpdateVel(
 void StarlingOffboard::VehicleLocalPosCallback(
     const px4_msgs::msg::VehicleLocalPosition::SharedPtr pos_msg) {
   // Only publish the pose once the drone is armed and transforms have been set
+  azimuth_ = pos_msg->heading;
   if (state_ >= State::PREFLT) {
     pos_msg_ = *pos_msg;
     const Eigen::Vector4d pos_vec(pos_msg->x, pos_msg->y, pos_msg->z, 1.0);

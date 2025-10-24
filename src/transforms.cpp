@@ -57,9 +57,10 @@ void StarlingOffboard::ComputeTagNedTransform(){
     // The AprilTag is located underneath the drone at takeoff.
     // Assume that the front of the drone xB is aligned with -yT the top of the AprilTag
     // Then T_tag_ned is defined by a rotation about the z-axis given by the heading.
-    Eigen::Matrix3d rot_mat_z = Eigen::AngleAxisd(M_PI - heading_, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    Eigen::Matrix3d rot_mat_z = Eigen::AngleAxisd(M_PI - azimuth_, Eigen::Vector3d::UnitZ()).toRotationMatrix();
     T_tag_ned_.block<3,3>(0,0) = rot_mat_z;
     T_ned_tag_ = T_tag_ned_.inverse();
+    RCLCPP_WARN(this->get_logger(), "Azimuth: %f", azimuth_);
     RCLCPP_WARN(this->get_logger(), "T_ned_tag_:\n%s",
                    EigenToStr(T_ned_tag_).c_str());
 }
