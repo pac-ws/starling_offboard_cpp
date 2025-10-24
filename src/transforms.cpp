@@ -61,8 +61,8 @@ void StarlingOffboard::ComputeTagNedTransform(){
     T_tag_ned_.block<3,3>(0,0) = rot_mat_z;
     T_ned_tag_ = T_tag_ned_.inverse();
     RCLCPP_WARN(this->get_logger(), "Azimuth: %f", azimuth_);
-    RCLCPP_WARN(this->get_logger(), "T_ned_tag_:\n%s",
-                   EigenToStr(T_ned_tag_).c_str());
+    RCLCPP_WARN(this->get_logger(), "T_tag_ned_:\n%s",
+                   EigenToStr(T_tag_ned_).c_str());
 }
 
 void StarlingOffboard::ComputeNedCamTransform(){
