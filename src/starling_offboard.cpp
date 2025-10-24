@@ -214,6 +214,8 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::IDLE: {
+      ComputeTagNedTransform();
+      
       // Mission origin has been converted to a topic
       // Homify launch GPS is still a parameter
       // Can't get to this point without having received it
@@ -242,7 +244,6 @@ void StarlingOffboard::TimerCallback() {
 
       ComputeTransforms();
       ComputeStartPosTakeoff();
-      ComputeTagNedTransform();
 
       RCLCPP_WARN_ONCE(this->get_logger(), "kP: %f", params_.kP);
 
