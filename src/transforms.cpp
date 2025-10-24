@@ -60,8 +60,8 @@ void StarlingOffboard::ComputeTagNedTransform(){
     Eigen::Matrix3d rot_mat_z = Eigen::AngleAxisd(M_PI - azimuth_, Eigen::Vector3d::UnitZ()).toRotationMatrix();
     T_tag_ned_.block<3,3>(0,0) = rot_mat_z;
     T_ned_tag_ = T_tag_ned_.inverse();
-    RCLCPP_WARN(this->get_logger(), "Azimuth: %f", azimuth_);
-    RCLCPP_WARN(this->get_logger(), "T_tag_ned_:\n%s",
+    RCLCPP_WARN_ONCE(this->get_logger(), "Azimuth: %f", azimuth_);
+    RCLCPP_WARN_ONCE(this->get_logger(), "T_tag_ned_:\n%s",
                    EigenToStr(T_tag_ned_).c_str());
 }
 
