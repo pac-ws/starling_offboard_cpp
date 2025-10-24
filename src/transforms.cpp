@@ -60,7 +60,7 @@ void StarlingOffboard::ComputeTagNedTransform(){
     Eigen::Matrix3d rot_mat_z = Eigen::AngleAxisd(M_PI - heading_, Eigen::Vector3d::UnitZ()).toRotationMatrix();
     T_tag_ned_.block<3,3>(0,0) = rot_mat_z;
     T_ned_tag_ = T_tag_ned_.inverse();
-    RCLCPP_DEBUG(this->get_logger(), "T_ned_tag_:\n%s",
+    RCLCPP_WARN(this->get_logger(), "T_ned_tag_:\n%s",
                    EigenToStr(T_ned_tag_).c_str());
 }
 
@@ -74,7 +74,7 @@ void StarlingOffboard::ComputeNedCamTransform(){
     T_tag_cam_ = iso.matrix();
     T_cam_tag_ = T_tag_cam_.inverse();
     T_cam_ned_ = T_tag_ned_ * T_cam_tag_;
-    RCLCPP_DEBUG(this->get_logger(), "T_cam_ned_:\n%s",
+    RCLCPP_WARN(this->get_logger(), "T_cam_ned_:\n%s",
                    EigenToStr(T_cam_ned_).c_str());
 }
 

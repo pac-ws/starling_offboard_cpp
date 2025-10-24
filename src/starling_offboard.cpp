@@ -192,7 +192,7 @@ void StarlingOffboard::TimerCallback() {
   // 
   if (tf_tag_cam_received_ && !ned_cam_computed_){
     ComputeNedCamTransform();
-    ned_cam_computed_ = True;
+    ned_cam_computed_ = true;
   }
 
   // State Machine
@@ -252,9 +252,6 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::PREFLT:
-      if () {
-          RCLCPP_WARN(this->get_logger(), "
-      }
       if (ob_takeoff_ && ob_enable_) {
         if (geofence_ && !geofence_is_set_) {
           RCLCPP_WARN(this->get_logger(), "Geofence is requested but not set. Will not arm. Is get_system_info service available?");
