@@ -25,12 +25,15 @@ struct Params {
   double fence_x_buf_r = 10.0;
   double fence_y_buf_b = 10.0;
   double fence_y_buf_t = 10.0;
+  double kP_land = 1.0;
+  double kD_land = 0.1;
 };
 
 struct Subscriptions {
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel;
   // rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr mission_origin_gps;
   // rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr launch_gps;
+  rclcpp::Subscription<px4_msgs::msg::VehicleAttitude>::SharedPtr vehicle_attitude;
   rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr vehicle_status;
   rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
       vehicle_local_pos;

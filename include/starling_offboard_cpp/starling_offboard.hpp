@@ -26,6 +26,7 @@
 #include <px4_msgs/msg/vehicle_global_position.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
+#include <px4_msgs/msg/vehicle_attitude.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rcl_interfaces/srv/get_parameters.hpp>
 #include <sstream>
@@ -76,6 +77,8 @@ class StarlingOffboard : public rclcpp::Node {
   bool reached_land_pos_h_ = false;
   bool reached_land_pos_v_ = false;
   bool reached_land_stationary_v_ = false;
+  bool pos_msg_received_ = false;
+  bool att_msg_received_ = false;
 
   // GPS coordinates at the launch site
   double launch_gps_lat_;
@@ -97,6 +100,14 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Matrix<double, 4, 4> T_tag_cam_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_cam_tag_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_cam_ned_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_imu_cam_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_cam_imu_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_body_imu_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_imu_body_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_ned_body_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_body_ned_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_tag_body_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix<double, 4, 4> T_body_tag_ = Eigen::Matrix4d::Identity();
 
   State state_ = State::INIT_START;
 
@@ -118,6 +129,7 @@ class StarlingOffboard : public rclcpp::Node {
   rclcpp::TimerBase::SharedPtr path_pub_timer_;
   rclcpp::Clock::SharedPtr clock_;
 
+  px4_msgs::msg::VehicleAttitude att_msg_;
   px4_msgs::msg::VehicleLocalPosition pos_msg_;
   px4_msgs::msg::SensorGps gps_pos_msg_;
   px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
@@ -151,10 +163,14 @@ class StarlingOffboard : public rclcpp::Node {
   void GetMissionOriginGPS();
   void InitializeSubscribers();
   void InitializePublishers();
-  void ComputeTransforms();
+  void ComputeLocalMissionTransform();
   void ComputeStartPosTakeoff();
   void ComputeTagNedTransform();
-  void ComputeNedCamTransform();
+  void ComputeLocalBodyTransform();
+  void ComputeTagCamTransform();
+  void ComputeTagLocalTransform();
+  void ComputeTagBodyTransform();
+  void ComputeExtrinsicTransforms();
   void Arm();
   void Disarm();
   void GeofenceCheck();

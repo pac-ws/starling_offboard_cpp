@@ -1,4 +1,5 @@
 #include "starling_offboard_cpp/starling_offboard.hpp"
+#include <istream>
 
 namespace pac_ws::starling_offboard {
 StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
@@ -119,6 +120,13 @@ void StarlingOffboard::InitializeSubscribers() {
               [this](const px4_msgs::msg::SensorGps::SharedPtr msg) {
                 gps_pos_msg_ = *msg;
               });
+  subs_.vehicle_attitude =
+      this->create_subscription<px4_msgs::msg::VehicleAttitude>(
+          "fmu/out/vehicle_attitude", qos_,
+              [this](const px4_msgs::msg::VehicleAttitude::SharedPtr msg) {
+                att_msg_ = *msg;
+                att_msg_received_ = true;
+              });
   subs_.tf_tag_cam =
       this->create_subscription<tf2_msgs::msg::TFMessage>(
           "tf", qos_,
@@ -176,6 +184,9 @@ void StarlingOffboard::InitializePublishers() {
  * @brief Main Loop
  */
 void StarlingOffboard::TimerCallback() {
+  if (att_msg_received_ && pos_msg_received_){
+      ComputeLocalBodyTransform();
+  }
 
   // Geofence check
   if(geofence_) {
@@ -187,12 +198,6 @@ void StarlingOffboard::TimerCallback() {
         geofence_is_set_ = true;
       }
     }
-  }
-  
-  // 
-  if (tf_tag_cam_received_ && !ned_cam_computed_){
-    ComputeNedCamTransform();
-    ned_cam_computed_ = true;
   }
 
   // State Machine
@@ -214,11 +219,6 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::IDLE: {
-      ComputeTagNedTransform();
-      
-      // Mission origin has been converted to a topic
-      // Homify launch GPS is still a parameter
-      // Can't get to this point without having received it
       if (!mission_control_received_) {
           RCLCPP_WARN_ONCE(this->get_logger(), "Waiting for mission control topic...");
           break;
@@ -242,7 +242,8 @@ void StarlingOffboard::TimerCallback() {
       RCLCPP_DEBUG(this->get_logger(), "lat: %.8f", launch_gps_lat_);
       RCLCPP_DEBUG(this->get_logger(), "lon: %.8f", launch_gps_lon_);
 
-      ComputeTransforms();
+      ComputeLocalMissionTransform();
+      ComputeExtrinsicTransforms();
       ComputeStartPosTakeoff();
 
       RCLCPP_WARN_ONCE(this->get_logger(), "kP: %f", params_.kP);
@@ -267,10 +268,7 @@ void StarlingOffboard::TimerCallback() {
       if (offboard_setpoint_counter_ == 10) {
         // Change to Offboard mode after 10 setpoints
         this->PubVehicleCommand(VehicleCommand::VEHICLE_CMD_DO_SET_MODE, 1, 6);
-
-        // Arm the vehicle
         this->Arm();
-
         if (arming_state_ == 2) {
           RCLCPP_INFO(this->get_logger(), "Vehicle armed");
           state_ = State::TAKEOFF;
@@ -282,13 +280,10 @@ void StarlingOffboard::TimerCallback() {
           offboard_setpoint_counter_ = 0;
         }
       }
-
       // Send 10 setpoints before attempting to Arm
       // offboard_control_mode needs to be paired with trajectory_setpoint
       PubOffboardControlMode(ControlMode::POS);
       PubTrajSetpointPos(takeoff_pos_ned_);
-
-      // stop the counter after reaching 11
       if (offboard_setpoint_counter_ < 11) {
         offboard_setpoint_counter_++;
       }
@@ -296,10 +291,8 @@ void StarlingOffboard::TimerCallback() {
     
 
     case State::TAKEOFF:
-      // error calculation
       takeoff_completed_ = 
         HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
-
       if (takeoff_completed_) {
         PubOffboardControlMode(ControlMode::VEL);
         PubTrajSetpointVel(stop_vel_);
@@ -308,13 +301,11 @@ void StarlingOffboard::TimerCallback() {
         RCLCPP_INFO(this->get_logger(),
                     "Takeoff complete -- reached setpoint within TOL");
       } else {
-        // offboard_control_mode needs to be paired with trajectory_setpoint
         PubOffboardControlMode(ControlMode::POS);
         PubTrajSetpointPos(takeoff_pos_ned_);
       }
       break;
     
-    // GNN, Square, etc..
     case State::MISSION: {
       if (ob_land_) {
         state_ = State::LANDING_H;
@@ -326,9 +317,7 @@ void StarlingOffboard::TimerCallback() {
       // offboard_control_mode needs to be paired with trajectory_setpoint
       // If the message rate drops bellow 2Hz, the drone exits offboard control
       PubOffboardControlMode(ControlMode::VEL);
-
       rclcpp::Time time_now = clock_->now();
-
       rclcpp::Duration duration = time_now - time_last_vel_update_;
       if (duration.seconds() > 1.0) {
         double err_z = (pos_msg_.z + params_.z_takeoff);
@@ -337,10 +326,7 @@ void StarlingOffboard::TimerCallback() {
         PubTrajSetpointVel(stop_vel_);
         //RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
       }
-
       else {
-        // RCLCPP_INFO(this->get_logger(), "NED Velocity (%f, %f, %f)",
-        // vel_ned_[0], vel_ned_[1], vel_ned_[2]);
         PubTrajSetpointVel(vel_ned_);
       }
       break;
@@ -362,27 +348,32 @@ void StarlingOffboard::TimerCallback() {
       break;
 
     case State::LANDING_V:
-      if (tf_tag_cam_received_) {
-        // Fly to (0,0,0) in the fixed frame (defined by the april tag).
-        break;
-      }
-      else {
-        // Check both position and velocity to ensure the drone has landed
-        reached_land_pos_v_ =
-          HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
-        reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
+      ComputeTagCamTransform();
+      ComputeTagLocalTransform();
+      ComputeTagBodyTransform();
 
-        if (reached_land_pos_v_ && reached_land_stationary_v_) {
-          state_ =  State::DISARM;
-          RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence finished");
-          RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
-        }
-        else{
-          PubOffboardControlMode(ControlMode::VEL);
-          PubTrajSetpointPos(land_vel_);
-        }
-        break;
+      reached_land_pos_v_ =
+        HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
+      reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
+      if (reached_land_pos_v_ && reached_land_stationary_v_) {
+        state_ =  State::DISARM;
+        RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence finished");
+        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       }
+      else{
+          if (tf_tag_cam_received_) {
+            yaw_ = -std::atan2(T_tag_body_(1, 0), T_tag_body_(0, 0)); // Assumption, only correcting yaw
+            const Eigen::Vector4d p_tag(0,0,0,1); // The position of the tag in the fixed frame.
+            Eigen::Vector4d p_ned = TransformVec(p_tag, T_tag_ned_);
+            PubOffboardControlMode(ControlMode::POS);
+            PubTrajSetpointPos(p_ned);
+          }
+          else {
+            PubOffboardControlMode(ControlMode::VEL);
+            PubTrajSetpointVel(land_vel_);
+          }
+      }
+      break;
 
     case State::DISARM:
       if (arming_state_ == 2) {
@@ -572,21 +563,11 @@ void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
  */
 void StarlingOffboard::UpdateVel(
   const geometry_msgs::msg::TwistStamped::SharedPtr cmd_vel) {
-  // Proportional controller to maintain altitude
   const double err_z = (params_.z_takeoff + pos_msg_.z);
-
-  // const Eigen::Vector4d vel_mission (
-  //                           (double) clamp(scale *
-  //                           cmd_vel->twist.linear.y, -2.0, 2.0), (double)
-  //                           clamp(scale * cmd_vel->twist.linear.x,
-  //                           -2.0, 2.0), (double) clamp((double)(-kP * err_z),
-  //                           -2.0, 2.0), 1.0);
   const Eigen::Vector4d vel_mission(cmd_vel->twist.linear.x,
                                     cmd_vel->twist.linear.y, 
                                     params_.kP * err_z, 
                                     0.0);
-
-  // Transform the velocity from the mission frame to NED
   vel_ned_ = TransformVec(vel_mission, T_miss_ned_);
   ClampVelocity(params_.max_speed, vel_ned_);
   time_last_vel_update_ = clock_->now();
@@ -598,6 +579,7 @@ void StarlingOffboard::UpdateVel(
  */
 void StarlingOffboard::VehicleLocalPosCallback(
     const px4_msgs::msg::VehicleLocalPosition::SharedPtr pos_msg) {
+  pos_msg_received_ = true;
   // Only publish the pose once the drone is armed and transforms have been set
   azimuth_ = pos_msg->heading;
   if (state_ >= State::PREFLT) {
