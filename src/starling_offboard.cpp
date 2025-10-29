@@ -129,10 +129,12 @@ void StarlingOffboard::InitializeSubscribers() {
               });
   subs_.tf_tag_cam =
       this->create_subscription<tf2_msgs::msg::TFMessage>(
-          "tf", qos_,
+          "/tf", qos_,
               [this](const tf2_msgs::msg::TFMessage::SharedPtr msg) {
                 tf_tag_cam_msg_ = *msg;
+                RCLCPP_INFO_ONCE(this->get_logger(), "Transform received");
                 if (!tf_tag_cam_msg_.transforms.empty()) {
+                    RCLCPP_INFO(this->get_logger(), "Tag detected");
                     tf_tag_cam_received_ = true;
                 }
               });
