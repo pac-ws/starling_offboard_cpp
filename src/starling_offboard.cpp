@@ -256,6 +256,7 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::PREFLT:
+      RCLCPP_INFO_ONCE(this->get_logger(), "Received tag_wrt_cam tf? %d", tf_tag_cam_received_);
       if (ob_takeoff_ && ob_enable_) {
         if (geofence_ && !geofence_is_set_) {
           RCLCPP_WARN(this->get_logger(), "Geofence is requested but not set. Will not arm. Is get_system_info service available?");
