@@ -134,7 +134,6 @@ void StarlingOffboard::InitializeSubscribers() {
                 tf_tag_cam_msg_ = *msg;
                 RCLCPP_INFO_ONCE(this->get_logger(), "Transform received");
                 if (!tf_tag_cam_msg_.transforms.empty()) {
-                    RCLCPP_INFO(this->get_logger(), "Tag detected");
                     tf_tag_cam_received_ = true;
                 }
               });
