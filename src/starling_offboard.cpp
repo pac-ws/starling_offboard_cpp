@@ -368,6 +368,7 @@ void StarlingOffboard::TimerCallback() {
             yaw_ = -std::atan2(T_tag_body_(1, 0), T_tag_body_(0, 0)); // Assumption, only correcting yaw
             const Eigen::Vector4d p_tag(0,0,0,1); // The position of the tag in the fixed frame.
             Eigen::Vector4d p_ned = TransformVec(p_tag, T_tag_ned_);
+            RCLCPP_INFO(this->get_logger(), "p_ned: %s" , EigenToStr(p_ned).c_str());
             PubOffboardControlMode(ControlMode::POS);
             PubTrajSetpointPos(p_ned);
           }
