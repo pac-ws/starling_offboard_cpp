@@ -78,6 +78,9 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<double>("fence_y_buf_t", 10.0);
   this->get_parameter("fence_y_buf_t", params_.fence_y_buf_t);
+
+  this->declare_parameter<bool>("debug", false);
+  this->get_parameter("debug", params_.debug);
 }
 
 void StarlingOffboard::InitializeGeofence(){
@@ -177,6 +180,9 @@ void StarlingOffboard::InitializePublishers() {
   pubs_.traj_setpoint =
       this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(
           "fmu/in/trajectory_setpoint", params_.buffer_size);
+  pubs_.transform_tag_ned = 
+      this->create_publisher<tf2_msgs::msg::TFMessage>(
+              "transform_tag_ned", params_.buffer_size);
   status_timer_ = this->create_wall_timer(
       intervals_.Long, std::bind(&StarlingOffboard::StatusTimerCallback, this));
 }
@@ -353,6 +359,9 @@ void StarlingOffboard::TimerCallback() {
       ComputeTagCamTransform();
       ComputeTagLocalTransform();
       ComputeTagBodyTransform();
+      if (params_.debug){
+          PubTransforms();
+      }
 
       reached_land_pos_v_ =
         HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
@@ -363,13 +372,14 @@ void StarlingOffboard::TimerCallback() {
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       }
       else{
-          if (tf_tag_cam_received_) {
+          if (tf_tag_cam_received_ && !sent_p_ned) {
             yaw_ = -std::atan2(T_tag_body_(1, 0), T_tag_body_(0, 0)); // Assumption, only correcting yaw
             const Eigen::Vector4d p_tag(0,0,0,1); // The position of the tag in the fixed frame.
             Eigen::Vector4d p_ned = TransformVec(p_tag, T_tag_ned_);
             RCLCPP_INFO(this->get_logger(), "p_ned: %s" , EigenToStr(p_ned).c_str());
             PubOffboardControlMode(ControlMode::POS);
             PubTrajSetpointPos(p_ned);
+            sent_p_ned = true;
           }
           else {
             PubOffboardControlMode(ControlMode::VEL);
@@ -540,7 +550,7 @@ void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
                       static_cast<float>(0.0),
                       static_cast<float>(0.0)
       };
-  }
+}
   msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
   msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
   pubs_.traj_setpoint->publish(msg);
@@ -651,6 +661,43 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
       static_cast<uint64_t>(this->get_clock()->now().nanoseconds() / 1000);
   pubs_.vehicle_command->publish(msg);
 }
+
+inline geometry_msgs::msg::TransformStamped TFMessageBuilder(const Eigen::Matrix4d T,
+                                                             const std::string& frame_id, 
+                                                             const std::string& child_id, 
+                                                             const rclcpp::Time& stamp) {
+    geometry_msgs::msg::TransformStamped msg{};
+    // Make sure the rotation is orthonormal (correct numerical errors)
+    Eigen::Vector3d t = T.block<3,1>(0, 3);
+    Eigen::Matrix3d R_raw = T.block<3,3>(0, 0);
+    Eigen::JacobiSVD<Eigen::Matrix3d> svd(R_raw, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    Eigen::Matrix3d R = svd.matrixU() * svd.matrixV().transpose();
+    // reflection; wrong handedness
+    if (R.determinant() < 0){
+        Eigen::Matrix3d U = svd.matrixU();
+        U.col(2) *= -1; // switch handedness
+        R = U * svd.matrixV().transpose();
+    }
+    Eigen::Quaterniond q(R);
+    msg.header.stamp = stamp;
+    msg.header.frame_id = frame_id;
+    msg.child_frame_id = child_id;
+    msg.transform.translation.x = t(0);
+    msg.transform.translation.y = t(1);
+    msg.transform.translation.z = t(2);
+    msg.transform.rotation.x = q.x();
+    msg.transform.rotation.y = q.y();
+    msg.transform.rotation.z = q.z();
+    msg.transform.rotation.w = q.w();
+    return msg;
+}
+
+void StarlingOffboard::PubTransforms() {
+    tf2_msgs::msg::TFMessage msg{};
+    msg.transforms.emplace_back(TFMessageBuilder(T_tag_ned_, "tag", "ned", this->now()));
+    pubs_.transform_tag_ned->publish(msg);
+}
+
 }  // namespace pac_ws::starling_offboard
 
 int main(int argc, char* argv[]) {

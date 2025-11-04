@@ -27,6 +27,7 @@ struct Params {
   double fence_y_buf_t = 10.0;
   double kP_land = 1.0;
   double kD_land = 0.1;
+  bool debug = false;
 };
 
 struct Subscriptions {
@@ -54,5 +55,6 @@ struct Publishers {
   rclcpp::Publisher<px4_msgs::msg::OffboardControlMode>::SharedPtr
       offboard_control_mode;
   rclcpp::Publisher<px4_msgs::msg::VehicleCommand>::SharedPtr vehicle_command;
+  rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr transform_tag_ned;
 };
 }  // namespace pac_ws::starling_offboard

@@ -79,6 +79,7 @@ class StarlingOffboard : public rclcpp::Node {
   bool reached_land_stationary_v_ = false;
   bool pos_msg_received_ = false;
   bool att_msg_received_ = false;
+  bool sent_p_ned = false;
 
   // GPS coordinates at the launch site
   double launch_gps_lat_;
@@ -189,6 +190,7 @@ class StarlingOffboard : public rclcpp::Node {
   void PubOffboardControlMode(const ControlMode mode);
   void PubTrajSetpointVel(const Eigen::Vector4d& target_vel);
   void PubTrajSetpointPos(const Eigen::Vector4d& target_pos);
+  void PubTransforms();
 
   /**
    * @brief Transform the position from mission frame to NED
