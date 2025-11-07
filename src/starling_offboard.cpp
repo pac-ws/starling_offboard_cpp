@@ -41,6 +41,9 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<double>("position_tolerance", 1.0);
   this->get_parameter("position_tolerance", params_.position_tolerance);
 
+  this->declare_parameter<double>("stationary_vel_tol", 0.1);
+  this->get_parameter("stationary_vel_tol", params_.stationary_vel_tol);
+
   this->declare_parameter<double>("env_scale_factor", 50.0);
   this->get_parameter("env_scale_factor", params_.env_scale_factor);
   // Default to the parameter value if not set by the system info service
@@ -78,6 +81,9 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<double>("fence_y_buf_t", 10.0);
   this->get_parameter("fence_y_buf_t", params_.fence_y_buf_t);
+
+  this->declare_parameter<bool>("landing_XY_tol", 0.5);
+  this->get_parameter("landing_XY_tol", params_.landing_XY_tol);
 
   this->declare_parameter<bool>("debug", false);
   this->get_parameter("debug", params_.debug);
@@ -195,6 +201,12 @@ void StarlingOffboard::TimerCallback() {
       ComputeLocalBodyTransform();
   }
 
+  if (ob_land) {
+      ComputeTagCamTransform();
+      ComputeTagLocalTransform();
+      ComputeTagBodyTransform();
+  }
+
   // Geofence check
   if(geofence_) {
     if (geofence_is_set_) {
@@ -213,14 +225,14 @@ void StarlingOffboard::TimerCallback() {
       InitializeSubscribers();
       InitializePublishers();
       RCLCPP_WARN(this->get_logger(), "Initialized pubs and subs");
-      state_ = State::INIT_GPS;
+      ChangeState(State::INIT_GPS);
       break;
     }
 
     case State::INIT_GPS: {
       if (launch_gps_sc_->Done()) {
         RCLCPP_INFO(this->get_logger(), "Launch GPS received");
-        state_ = State::IDLE;
+        ChangeState(State::IDLE);
       }
       break;
     }
@@ -255,8 +267,7 @@ void StarlingOffboard::TimerCallback() {
 
       RCLCPP_WARN_ONCE(this->get_logger(), "kP: %f", params_.kP);
 
-      state_ = State::PREFLT;
-      RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+      ChangeState(State::PREFLT);
       break;
     }
 
@@ -266,9 +277,7 @@ void StarlingOffboard::TimerCallback() {
         if (geofence_ && !geofence_is_set_) {
           RCLCPP_WARN(this->get_logger(), "Geofence is requested but not set. Will not arm. Is get_system_info service available?");
         }
-        state_ = State::ARMING;
-        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
-        RCLCPP_DEBUG(this->get_logger(), "yaw_: %f", yaw_);
+        ChangeState(State::ARMING);
       } 
       break;
 
@@ -279,12 +288,10 @@ void StarlingOffboard::TimerCallback() {
         this->Arm();
         if (arming_state_ == 2) {
           RCLCPP_INFO(this->get_logger(), "Vehicle armed");
-          state_ = State::TAKEOFF;
-          RCLCPP_DEBUG(this->get_logger(), "yaw_: %f", yaw_);
-          RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
-        } else {
+          ChangeState(State::TAKEOFF);
+        } 
+        else {
           RCLCPP_WARN(this->get_logger(), "Vehicle not armed");
-          // Retry
           offboard_setpoint_counter_ = 0;
         }
       }
@@ -299,16 +306,14 @@ void StarlingOffboard::TimerCallback() {
     
 
     case State::TAKEOFF:
-      takeoff_completed_ = 
-        HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
+      takeoff_completed_ = HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
       if (takeoff_completed_) {
         PubOffboardControlMode(ControlMode::VEL);
         PubTrajSetpointVel(stop_vel_);
-        state_ = State::MISSION;
-        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
-        RCLCPP_INFO(this->get_logger(),
-                    "Takeoff complete -- reached setpoint within TOL");
-      } else {
+        ChangeState(State::MISSION);
+        RCLCPP_INFO(this->get_logger(), "Takeoff complete.");
+      }
+      else {
         PubOffboardControlMode(ControlMode::POS);
         PubTrajSetpointPos(takeoff_pos_ned_);
       }
@@ -316,37 +321,43 @@ void StarlingOffboard::TimerCallback() {
     
     case State::MISSION: {
       if (ob_land_) {
-        state_ = State::LANDING_H;
-        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
-        RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
+        ChangeState(State::LANDING_INIT);
         break;
       }
-
-      // offboard_control_mode needs to be paired with trajectory_setpoint
-      // If the message rate drops bellow 2Hz, the drone exits offboard control
-      PubOffboardControlMode(ControlMode::VEL);
       rclcpp::Time time_now = clock_->now();
       rclcpp::Duration duration = time_now - time_last_vel_update_;
+      PubOffboardControlMode(ControlMode::VEL);
       if (duration.seconds() > 1.0) {
         double err_z = (pos_msg_.z + params_.z_takeoff);
-      stop_vel_[2] = -1.0 * err_z;
+        stop_vel_[2] = -1.0 * err_z;
         ClampVelocity(params_.max_speed, stop_vel_);
         PubTrajSetpointVel(stop_vel_);
-        //RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
       }
       else {
-        PubTrajSetpointVel(vel_ned_);
+        PubTrajSetpointVel(vel_ned_); //vel_ned_ is updated by LPAC
       }
       break;
     }
 
-    case State::LANDING_H:
-      reached_land_pos_h_ = 
-        HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
-      if (reached_land_pos_h_) {
-        state_ = State::LANDING_V;
-        RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
-        RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+    case State::LANDING_INIT:
+      if (HasDetectedTag()) { 
+        initial_landing_altitude_ = pos_msg_.z;
+        ChangeState(State::LANDING_TAG_DETECTED);
+      }
+      else if (HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance) {
+        RCLCPP_WARN_ONCE(this->get_logger(), "Arrived at launch location.");
+        if (!params_.en_apriltag_landing) {
+            ChangeState(State::LANDING_CLOSED_LOOP_DESCENT);
+        }
+        else {
+        rclcpp::Time time_now = clock_->now();
+            if (!arrival_time_)
+                arrival_time_ = time_now;
+            rclcpp::Duration duration = time_now - arrival_time_;
+            if (duration.seconds() > 5.0){
+                ChangeState(State::LANDING_SEARCH_FOR_TAG);
+            }
+        }
       }
       else{
         // Lateral move to the takeoff position
@@ -355,6 +366,95 @@ void StarlingOffboard::TimerCallback() {
       }
       break;
 
+    case State::LANDING_TAG_DETECTED:
+      Eigen::Vector4d p_ned = TransformVec(p_tag_, T_tag_ned_);
+      if (!HasDetectedTag()){
+          ChangeState(State::LANDING_SEARCH_FOR_TAG)
+      }
+      else if (HasReachedPos(pos_msg_, p_ned, params_.landing_XY_tol, /*en_3d*/ false)) { // First, only align XY
+          ChangeState(State::LANDING_ALIGN_YAW);
+      } 
+      else {
+          Eigen::Vector4d v = PController(pos_msg_, p_ned, params_.kP);
+          v.z = 0.0;
+          PubOffboardControlMode(ControlMode::VEL);
+          PubTrajSetpointVel(v);
+      }
+      break;
+
+    case State::LANDING_ALIGN_YAW:
+      yaw_ = -std::atan2(T_tag_body_(1, 0), T_tag_body_(0, 0));
+      if (!HasDetectedTag()){
+          ChangeState(State::LANDING_SEARCH_ALT);
+      }
+      else if (HasReachedYaw()) {
+          ChangeState(LANDING_CLOSED_LOOP_DESCENT);
+      }
+      else {
+          PubOffboardControlMode(ControlMode::POS);
+          PubTrajSetpointVel(pos_msg_); // hold the current position but apply yaw
+      }
+      break;
+
+    case State::LANDING_CLOSED_LOOP_DESCENT:
+      Eigen::Vector4d p_ned = TransformVec(p_tag_ + p_hover_, T_tag_ned_) + closed_loop_min_height_;
+      double tightened_tol =  -params_.tol_slope * relative_height + params_.landing_XY_tol;
+      if (!HasDetectedTag()){
+          ChangeState(State::LANDING_SEARCH_ALT);
+      }
+      else if (HasReachedPos(pos_msg_, p_ned, params_.landing_XY_tol, /*en_3d*/ false)) { // First, only align XY
+          ChangeState(State::LANDING_OPEN_LOOP_DESCENT);
+      } 
+      else {
+          Eigen::Vector4d v = PController(pos_msg_, p_ned, params_.kP);
+          v.z = land_vel_; // manually control landing velocity
+          PubOffboardControlMode(ControlMode::VEL);
+          PubTrajSetpointVel(v)
+      }
+      break;
+
+    case State::LANDING_SEARCH_ALT:
+      Eigen::Vector4d search_position(pos_msg_.x, pos_msg_.y, params_.landing_search_alt);
+      if (HasDetectedTag()){
+        ChangeState(State::LANDING_TAG_DETECTED);
+      }
+      else if (HasReachedPos(pos_msg_, search_position, params_.landing_XY_tol, /*en_3d*/ false)){
+        CreateSearchWaypoints();
+        ChangeState(State::LANDING_SEARCH_FOR_TAG);
+      }
+      else {
+        PubOffboardControlMode(ControlMode::POS);
+        PubTrajSetpointVel(search_position); 
+      }
+      break;
+
+    case State::LANDING_SEARCH_FOR_TAG:
+      Eigen::Vector4d search_position = *search_buffer_.get_current();
+      if (HasDetectedTag()){
+        ChangeState(State::LANDING_TAG_DETECTED);
+      }
+      else if (HasReachedPos(pos_msg_, search_position, params_.landing_XY_tol, /*en_3d*/ false)){
+        search_buffer_.next();
+      }
+      else {
+        PubOffboardControlMode(ControlMode::POS);
+        PubTrajSetpointVel(search_position); 
+      }
+      break;
+
+    case State::LANDING_OPEN_LOOP_DESCENT)
+      bool pos_check = HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
+      bool vel_check = std::abs(pos_msg_.vz) < params_.stationary_vel_tol;
+      if (pos_check && vel_check) {
+        ChangeState(State::DISARM);
+      }
+      else {
+        PubOffboardControlMode(ControlMode::VEL);
+        PubTrajSetpointVel(land_vel_);
+      }
+      break;
+
+
     case State::LANDING_V:
       ComputeTagCamTransform();
       ComputeTagLocalTransform();
@@ -362,7 +462,6 @@ void StarlingOffboard::TimerCallback() {
       if (params_.debug){
           PubTransforms();
       }
-
       reached_land_pos_v_ =
         HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
       reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
@@ -456,6 +555,48 @@ void StarlingOffboard::PathPublisherTimerCallback() {
   path_.poses.push_back(latest_pose);
   pubs_.nav_path->publish(path_);
 }
+
+
+void StarlingOffboard::CreateSearchWaypoints() {
+  // diamond pattern centered on current position
+  std::vector<Eigen::Vector4d> w;
+  w.emplace_back(pos_msg_.x + params_.search_radius, 
+                 pos_msg_.y, 
+                 params_.landing_search_alt,
+                 1.0);
+  w.emplace_back(pos_msg_.x,
+                 pos_msg_.y + params_search_radius,
+                 params_.landing_search_alt,
+                 1.0);
+  w.emplace_back(pos_msg_.x - params_.search_radius,
+                 pos_msg_.y,
+                 params_.landing_search_alt,
+                 1.0);
+  w.emplace_back(pos_msg_.x, 
+                 pos_msg_.y - params_.search_radius,
+                 params_.landing_search_alt,
+                 1.0);
+  w.emplace_back(pos_msg_.x + params_.search_radius, 
+                 pos_msg_.y, 
+                 params_.landing_search_alt,
+                 1.0);
+  w.emplace_back(pos_msg_.x,
+                 pos_msg_.y, 
+                 params_.landing_search_alt,
+                 1.0);
+  search_buffer_(w, /*loop=*/false);
+}
+
+bool StarlingOffboard::HasDetectedTag() {
+    // Check if tag has been detected more than tol times within last 1 seconds
+    return 
+
+
+inline void StarlingOffboard::ChangeState(State new_state) {
+  state_ = new_state; 
+  RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+}
+
 
 /**
  * @brief Send a command to Arm the vehicle

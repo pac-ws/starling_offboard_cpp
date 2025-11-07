@@ -13,6 +13,7 @@ struct Params {
   size_t buffer_size;
   int robot_id = 1;
   double position_tolerance = 1.;  // waypoint position tolerance in meters
+  double stationary_vel_tol = 0.1;  
   double env_scale_factor = 1.0;
   double max_speed = 2.0;
   double kP = 1.0;
@@ -27,6 +28,7 @@ struct Params {
   double fence_y_buf_t = 10.0;
   double kP_land = 1.0;
   double kD_land = 0.1;
+  double landing_XY_tol = 0.5;
   bool debug = false;
 };
 
@@ -57,4 +59,31 @@ struct Publishers {
   rclcpp::Publisher<px4_msgs::msg::VehicleCommand>::SharedPtr vehicle_command;
   rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr transform_tag_ned;
 };
+
+
+struct WaypointBuffer {
+  std::size_t i = 0;
+  bool loop = false;
+  std::vector<Eigen::Vector4d> wpt_buffer;
+  explicit WaypointBuffer(std::vector<Eigen::Vector4d> waypoints, bool loop_=false)
+  : wpt_buffer(std::move(waypoints)), loop(loop_) {}
+
+  bool empty() const {
+      return wpt_buffer.empty();
+  }
+  bool done() const {
+      return (wpt_buffer.empty() || (!loop && i > wpt_buffer.size()));
+  }
+  const Eigen::Vector4d* get_current() const {
+      if done()
+          return nullptr;
+      return &wpt_buffer[i];
+  }
+  void next() const {
+      i++;
+      if (loop)
+          i %= wpt_buffer.size();
+  }
+};
+
 }  // namespace pac_ws::starling_offboard

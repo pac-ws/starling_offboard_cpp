@@ -34,8 +34,12 @@ enum class State {
   ARMING,
   TAKEOFF,
   MISSION,
-  LANDING_H,
-  LANDING_V,
+  LANDING_INIT,
+  LANDING_TAG_DETECTED,
+  LANDING_ALIGN_YAW,
+  LANDING_SEARCH_FOR_TAG,
+  LANDING_CLOSED_LOOP_DESCENT,
+  LANDING_OPEN_LOOP_DESCENT,
   DISARM
 };
 
@@ -55,10 +59,18 @@ inline std::string StateToString(State state) {
       return "TAKEOFF";
     case State::MISSION:
       return "MISSION";
-    case State::LANDING_H:
-      return "LANDING_H";
-    case State::LANDING_V:
-      return "LANDING_V";
+    case State::LANDING_INIT:
+      return "LANDING_INIT";
+    case State::LANDING_TAG_DETECTED:
+      return "LANDING_TAG_DETECTED";
+    case State::LANDING_SEARCH_FOR_TAG:
+      return "LANDING_SEARCH_FOR_TAG";
+    case State::LANDING_ALIGN_YAW:
+      return "LANDING_ALIGN_YAW";
+    case State::LANDING_CLOSED_LOOP_DESCENT:
+      return "LANDING_CLOSED_LOOP_DESCENT";
+    case State::LANDING_OPEN_LOOP_DESCENT:
+      return "LANDING_OPEN_LOOP_DESCENT";
     case State::DISARM:
       return "DISARM";
     default:

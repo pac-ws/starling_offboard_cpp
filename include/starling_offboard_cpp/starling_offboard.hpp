@@ -121,6 +121,7 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Vector4d takeoff_pos_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d takeoff_pos_ned_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d curr_position_ = Eigen::Vector4d::Unit(3);
+  const Eigen::Vector4d p_tag_(0,0,0,1); // The position of the tag in the fixed frame.
 
   rclcpp::Time time_last_vel_update_;
 

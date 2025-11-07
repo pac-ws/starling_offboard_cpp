@@ -7,7 +7,7 @@ namespace pac_ws::starling_offboard {
 /**
  * @brief Compute the velocity to reach the target position
  */
-inline Eigen::Vector4d PDController(
+inline Eigen::Vector4d PController(
     px4_msgs::msg::VehicleLocalPosition curr_pos,
     const Eigen::Vector4d& target_pos, const double kP = 1.0) {
   double err_x = (curr_pos.x - target_pos[0]);
@@ -24,12 +24,17 @@ inline Eigen::Vector4d PDController(
  */
 inline bool HasReachedPos(px4_msgs::msg::VehicleLocalPosition curr_pos,
                           const Eigen::Vector4d& target_pos,
-                          double tolerance = 1.0) {
+                          double tolerance = 1.0,
+                          bool en_3d = true 
+                          ) {
   const double err_x = std::abs(curr_pos.x - target_pos[0]);
   const double err_y = std::abs(curr_pos.y - target_pos[1]);
-  const double err_z = std::abs(curr_pos.z - target_pos[2]);
-
-  return err_x < tolerance && err_y < tolerance && err_z < tolerance;
+  bool ret = err_x < tolerance && err_y < tolerance;
+  if (en_3d) {
+    const double err_z = std::abs(curr_pos.z - target_pos[2]);
+    ret &= err_z < tolerance;
+  }
+  return ret;
 }
 
 inline void ClampVelocity(const double max_speed,
