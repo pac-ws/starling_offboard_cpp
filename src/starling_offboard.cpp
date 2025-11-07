@@ -16,6 +16,9 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
 
   land_vel_[2] = params_.land_vel_z;
 
+  const Eigen::Vector4d p_tag_{0.0, 0.0, 0.0, 1.0}; 
+  tf_buffer_.resize(params_.tf_buffer_size);
+
   // z_takeoff is the altitude set by the user
   // alt_offset_'s value is produced by homify to account for altitude offsets on the ground.
   // RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
@@ -82,8 +85,11 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<double>("fence_y_buf_t", 10.0);
   this->get_parameter("fence_y_buf_t", params_.fence_y_buf_t);
 
-  this->declare_parameter<bool>("landing_XY_tol", 0.5);
+  this->declare_parameter<double>("landing_XY_tol", 0.5);
   this->get_parameter("landing_XY_tol", params_.landing_XY_tol);
+
+  this->declare_parameter<int>("tf_buffer_size", 32);
+  this->get_parameter("tf_buffer_size", params_.tf_buffer_size);
 
   this->declare_parameter<bool>("debug", false);
   this->get_parameter("debug", params_.debug);
@@ -141,10 +147,11 @@ void StarlingOffboard::InitializeSubscribers() {
           "/tf", qos_,
               [this](const tf2_msgs::msg::TFMessage::SharedPtr msg) {
                 tf_tag_cam_msg_ = *msg;
-                RCLCPP_INFO_ONCE(this->get_logger(), "Transform received");
+                RCLCPP_INFO_ONCE(this->get_logger(), "AprilTag transform msg received");
                 if (!tf_tag_cam_msg_.transforms.empty()) {
                     tf_tag_cam_received_ = true;
-                }
+                    tf_buffer_[tf_buffer_idx++] = tf_tag_cam_msg_.transforms
+                    tf_buffer_idx %= tf_buffer_.size()
               });
   // subs_.mission_origin_gps = 
   //     this->create_subscription<geometry_msgs::msg::Point>(
@@ -272,7 +279,6 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::PREFLT:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Received tag_wrt_cam tf? %d", tf_tag_cam_received_);
       if (ob_takeoff_ && ob_enable_) {
         if (geofence_ && !geofence_is_set_) {
           RCLCPP_WARN(this->get_logger(), "Geofence is requested but not set. Will not arm. Is get_system_info service available?");
@@ -589,6 +595,9 @@ void StarlingOffboard::CreateSearchWaypoints() {
 
 bool StarlingOffboard::HasDetectedTag() {
     // Check if tag has been detected more than tol times within last 1 seconds
+    // 25 frames per second atleast 5 should detect the tag
+    }
+
     return 
 
 

@@ -110,6 +110,8 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Matrix<double, 4, 4> T_tag_body_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_body_tag_ = Eigen::Matrix4d::Identity();
 
+  std::vector<geometry_msgs::msg::TransformStamped> tf_buffer_;
+
   State state_ = State::INIT_START;
 
   // Holds the current velocity from the mission to be sent to the px4
@@ -121,7 +123,6 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Vector4d takeoff_pos_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d takeoff_pos_ned_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d curr_position_ = Eigen::Vector4d::Unit(3);
-  const Eigen::Vector4d p_tag_(0,0,0,1); // The position of the tag in the fixed frame.
 
   rclcpp::Time time_last_vel_update_;
 

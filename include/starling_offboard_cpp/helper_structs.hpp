@@ -29,6 +29,7 @@ struct Params {
   double kP_land = 1.0;
   double kD_land = 0.1;
   double landing_XY_tol = 0.5;
+  int tf_buffer_size = 32;
   bool debug = false;
 };
 
