@@ -17,6 +17,7 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   land_vel_[2] = params_.land_vel_z;
 
   const Eigen::Vector4d p_tag_{0.0, 0.0, 0.0, 1.0}; 
+  const Eigen::Vector4d p_cl_hover_ = p_tag + Eigen::Vector4d(0.0, 0.0, params_.cl_hover_alt, 0.0);
   tf_buffer_.resize(params_.tf_buffer_size);
 
   // z_takeoff is the altitude set by the user
@@ -85,6 +86,9 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<double>("fence_y_buf_t", 10.0);
   this->get_parameter("fence_y_buf_t", params_.fence_y_buf_t);
 
+  this->declare_parameter<double>("en_apriltag_landing", true);
+  this->get_parameter("en_apriltag_landing", params_.en_apriltag_landing);
+
   this->declare_parameter<double>("landing_XY_tol", 0.5);
   this->get_parameter("landing_XY_tol", params_.landing_XY_tol);
 
@@ -93,6 +97,15 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<bool>("debug", false);
   this->get_parameter("debug", params_.debug);
+
+  this->declare_parameter<double>("tag_detection_expiration", 0.5); //seconds
+  this->get_parameter("tag_detection_expiration", params_.tag_detection_expiration);
+
+  this->declare_parameter<double>("landing_search_alt", 5.0); //meters
+  this->get_parameter("landing_search_alt", params_.landing_search_alt);
+
+  this->declare_parameter<double>("cl_hover_alt", 1.0); //meters
+  this->get_parameter("cl_hover_alt", params_.cl_hover_alt);
 }
 
 void StarlingOffboard::InitializeGeofence(){
@@ -150,8 +163,9 @@ void StarlingOffboard::InitializeSubscribers() {
                 RCLCPP_INFO_ONCE(this->get_logger(), "AprilTag transform msg received");
                 if (!tf_tag_cam_msg_.transforms.empty()) {
                     tf_tag_cam_received_ = true;
-                    tf_buffer_[tf_buffer_idx++] = tf_tag_cam_msg_.transforms
-                    tf_buffer_idx %= tf_buffer_.size()
+                    tf_buffer_[tf_buffer_idx_++] = tf_tag_cam_msg_.transforms[0];
+                    tf_buffer_idx_ %= tf_buffer_.size();
+                }
               });
   // subs_.mission_origin_gps = 
   //     this->create_subscription<geometry_msgs::msg::Point>(
@@ -353,15 +367,15 @@ void StarlingOffboard::TimerCallback() {
       else if (HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance) {
         RCLCPP_WARN_ONCE(this->get_logger(), "Arrived at launch location.");
         if (!params_.en_apriltag_landing) {
-            ChangeState(State::LANDING_CLOSED_LOOP_DESCENT);
+            ChangeState(State::LANDING_OPEN_LOOP_DESCENT);
         }
         else {
         rclcpp::Time time_now = clock_->now();
             if (!arrival_time_)
                 arrival_time_ = time_now;
             rclcpp::Duration duration = time_now - arrival_time_;
-            if (duration.seconds() > 5.0){
-                ChangeState(State::LANDING_SEARCH_FOR_TAG);
+            if (duration.seconds() > VVLong / 1000.0){ // reference time is in milliseconds
+                ChangeState(State::LANDING_SEARCH_ALT);
             }
         }
       }
@@ -375,7 +389,7 @@ void StarlingOffboard::TimerCallback() {
     case State::LANDING_TAG_DETECTED:
       Eigen::Vector4d p_ned = TransformVec(p_tag_, T_tag_ned_);
       if (!HasDetectedTag()){
-          ChangeState(State::LANDING_SEARCH_FOR_TAG)
+          ChangeState(State::LANDING_SEARCH_ALT)
       }
       else if (HasReachedPos(pos_msg_, p_ned, params_.landing_XY_tol, /*en_3d*/ false)) { // First, only align XY
           ChangeState(State::LANDING_ALIGN_YAW);
@@ -403,7 +417,8 @@ void StarlingOffboard::TimerCallback() {
       break;
 
     case State::LANDING_CLOSED_LOOP_DESCENT:
-      Eigen::Vector4d p_ned = TransformVec(p_tag_ + p_hover_, T_tag_ned_) + closed_loop_min_height_;
+      Eigen::Vector4d p_ned = TransformVec(p_tag_ + p_cl_hover_, T_tag_ned_);
+
       double tightened_tol =  -params_.tol_slope * relative_height + params_.landing_XY_tol;
       if (!HasDetectedTag()){
           ChangeState(State::LANDING_SEARCH_ALT);
@@ -593,12 +608,27 @@ void StarlingOffboard::CreateSearchWaypoints() {
   search_buffer_(w, /*loop=*/false);
 }
 
-bool StarlingOffboard::HasDetectedTag() {
-    // Check if tag has been detected more than tol times within last 1 seconds
-    // 25 frames per second atleast 5 should detect the tag
-    }
+bool StarlingOffboard::HasReachedYaw() {
+    if (!att_msg_received_)
+        return false;
+    double w = att_msg_.q[0];
+    double x = att_msg_.q[1];
+    double y = att_msg_.q[2];
+    double z = att_msg_.q[3];
+    Eigen::Quaterniond q(w, x, y, z);
+    Eigen::Matrix3d R = q.toRotationMatrix();
+    double yaw = std::atan2(R(1,0), R(0,0));
+    double delta_yaw = std::abs(yaw_ - yaw);
+    return delta_yaw < params_.yaw_tol;
+}
 
-    return 
+bool StarlingOffboard::HasDetectedTag() {
+    if (tf_buffer_.empty()) 
+        return false;
+    rclcpp::Time current_time = clock_->now();
+    const auto age = now - tf_buffer_[tf_buffer_idx_ - 1].header.stamp; 
+    return age.seconds() < params_.tag_detection_expiration 
+}
 
 
 inline void StarlingOffboard::ChangeState(State new_state) {

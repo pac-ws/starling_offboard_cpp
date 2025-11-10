@@ -110,6 +110,7 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Matrix<double, 4, 4> T_tag_body_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_body_tag_ = Eigen::Matrix4d::Identity();
 
+  int tf_buffer_idx_ = 0;
   std::vector<geometry_msgs::msg::TransformStamped> tf_buffer_;
 
   State state_ = State::INIT_START;
@@ -193,6 +194,8 @@ class StarlingOffboard : public rclcpp::Node {
   void PubTrajSetpointVel(const Eigen::Vector4d& target_vel);
   void PubTrajSetpointPos(const Eigen::Vector4d& target_pos);
   void PubTransforms();
+  bool HasDetectedTag();
+  bool HasReachedYaw();
 
   /**
    * @brief Transform the position from mission frame to NED

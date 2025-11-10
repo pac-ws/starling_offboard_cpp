@@ -7,13 +7,14 @@ struct Intervals {
   std::chrono::milliseconds Mid{100};
   std::chrono::milliseconds Long{1000};
   std::chrono::milliseconds VLong{2000};
+  std::chrono::milliseconds VVLong{5000};
 };
 
 struct Params {
   size_t buffer_size;
   int robot_id = 1;
-  double position_tolerance = 1.;  // waypoint position tolerance in meters
-  double stationary_vel_tol = 0.1;  
+  double position_tolerance = 1.; // waypoint position tolerance in meters
+  double stationary_vel_tol = 0.1;
   double env_scale_factor = 1.0;
   double max_speed = 2.0;
   double kP = 1.0;
@@ -28,16 +29,23 @@ struct Params {
   double fence_y_buf_t = 10.0;
   double kP_land = 1.0;
   double kD_land = 0.1;
+  bool en_apriltag_landing = true;
   double landing_XY_tol = 0.5;
+  double landing_search_alt = 5.0; // meters
   int tf_buffer_size = 32;
+  double tag_detection_expiration = 0.5; // seconds
+  double yaw_tol = 0.001; // radians
+  double cl_hover_alt = 1.0; // meters
   bool debug = false;
 };
 
 struct Subscriptions {
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel;
-  // rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr mission_origin_gps;
+  // rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr
+  // mission_origin_gps;
   // rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr launch_gps;
-  rclcpp::Subscription<px4_msgs::msg::VehicleAttitude>::SharedPtr vehicle_attitude;
+  rclcpp::Subscription<px4_msgs::msg::VehicleAttitude>::SharedPtr
+      vehicle_attitude;
   rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr vehicle_status;
   rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
       vehicle_local_pos;
@@ -61,30 +69,28 @@ struct Publishers {
   rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr transform_tag_ned;
 };
 
-
 struct WaypointBuffer {
   std::size_t i = 0;
   bool loop = false;
   std::vector<Eigen::Vector4d> wpt_buffer;
-  explicit WaypointBuffer(std::vector<Eigen::Vector4d> waypoints, bool loop_=false)
-  : wpt_buffer(std::move(waypoints)), loop(loop_) {}
+  explicit WaypointBuffer(std::vector<Eigen::Vector4d> waypoints,
+                          bool loop_ = false)
+      : wpt_buffer(std::move(waypoints)), loop(loop_) {}
 
-  bool empty() const {
-      return wpt_buffer.empty();
-  }
+  bool empty() const { return wpt_buffer.empty(); }
   bool done() const {
-      return (wpt_buffer.empty() || (!loop && i > wpt_buffer.size()));
+    return (wpt_buffer.empty() || (!loop && i > wpt_buffer.size()));
   }
-  const Eigen::Vector4d* get_current() const {
-      if done()
-          return nullptr;
-      return &wpt_buffer[i];
+  const Eigen::Vector4d *get_current() const {
+    if done ()
+      return nullptr;
+    return &wpt_buffer[i];
   }
   void next() const {
-      i++;
-      if (loop)
-          i %= wpt_buffer.size();
+    i++;
+    if (loop)
+      i %= wpt_buffer.size();
   }
 };
 
-}  // namespace pac_ws::starling_offboard
+} // namespace pac_ws::starling_offboard
