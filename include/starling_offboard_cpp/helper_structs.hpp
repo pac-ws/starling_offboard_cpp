@@ -10,6 +10,11 @@ struct Intervals {
   std::chrono::milliseconds VVLong{5000};
 };
 
+struct TimedEvent {
+    rclcpp::Time trigger_time;
+    bool trigger_set = false;
+};
+
 struct Params {
   size_t buffer_size;
   int robot_id = 1;
@@ -31,11 +36,14 @@ struct Params {
   double kD_land = 0.1;
   bool en_apriltag_landing = true;
   double landing_XY_tol = 0.5;
+  double min_landing_XY_tol = 0.2;
   double landing_search_alt = 5.0; // meters
+  double search_radius = 1.0; 
   int tf_buffer_size = 32;
   double tag_detection_expiration = 0.5; // seconds
   double yaw_tol = 0.001; // radians
   double cl_hover_alt = 1.0; // meters
+  double tol_slope = 0.2;
   bool debug = false;
 };
 
@@ -70,23 +78,24 @@ struct Publishers {
 };
 
 struct WaypointBuffer {
-  std::size_t i = 0;
-  bool loop = false;
+  WaypointBuffer() = default;
   std::vector<Eigen::Vector4d> wpt_buffer;
+  bool loop = false;
+  std::size_t i = 0;
   explicit WaypointBuffer(std::vector<Eigen::Vector4d> waypoints,
                           bool loop_ = false)
       : wpt_buffer(std::move(waypoints)), loop(loop_) {}
 
   bool empty() const { return wpt_buffer.empty(); }
   bool done() const {
-    return (wpt_buffer.empty() || (!loop && i > wpt_buffer.size()));
+    return (wpt_buffer.empty() || (!loop && i >= wpt_buffer.size()));
   }
   const Eigen::Vector4d *get_current() const {
-    if done ()
+    if (done())
       return nullptr;
     return &wpt_buffer[i];
   }
-  void next() const {
+  void next() {
     i++;
     if (loop)
       i %= wpt_buffer.size();

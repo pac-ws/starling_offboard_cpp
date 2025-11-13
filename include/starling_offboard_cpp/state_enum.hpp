@@ -37,6 +37,7 @@ enum class State {
   LANDING_INIT,
   LANDING_TAG_DETECTED,
   LANDING_ALIGN_YAW,
+  LANDING_SEARCH_ALT,
   LANDING_SEARCH_FOR_TAG,
   LANDING_CLOSED_LOOP_DESCENT,
   LANDING_OPEN_LOOP_DESCENT,
@@ -63,6 +64,8 @@ inline std::string StateToString(State state) {
       return "LANDING_INIT";
     case State::LANDING_TAG_DETECTED:
       return "LANDING_TAG_DETECTED";
+    case State::LANDING_SEARCH_ALT:
+      return "LANDING_SEARCH_ALT";
     case State::LANDING_SEARCH_FOR_TAG:
       return "LANDING_SEARCH_FOR_TAG";
     case State::LANDING_ALIGN_YAW:

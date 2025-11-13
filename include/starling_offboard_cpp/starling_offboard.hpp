@@ -49,6 +49,10 @@ class StarlingOffboard : public rclcpp::Node {
  public:
   enum class ControlMode { POS, VEL };
   StarlingOffboard();
+  inline void ChangeState(State new_state) {
+    state_ = new_state; 
+    RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
+  }
 
  private:
   // Number of waypoints to set before attempting to enter offboard mode
@@ -113,6 +117,8 @@ class StarlingOffboard : public rclcpp::Node {
   int tf_buffer_idx_ = 0;
   std::vector<geometry_msgs::msg::TransformStamped> tf_buffer_;
 
+  double initial_landing_altitude_ = 0.0;
+
   State state_ = State::INIT_START;
 
   // Holds the current velocity from the mission to be sent to the px4
@@ -124,6 +130,8 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Vector4d takeoff_pos_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d takeoff_pos_ned_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d curr_position_ = Eigen::Vector4d::Unit(3);
+  Eigen::Vector4d p_tag_ = Eigen::Vector4d::Unit(3);
+  Eigen::Vector4d p_cl_hover_ = Eigen::Vector4d::Unit(3);
 
   rclcpp::Time time_last_vel_update_;
 
@@ -155,6 +163,8 @@ class StarlingOffboard : public rclcpp::Node {
   Params params_;
   Subscriptions subs_;
   Publishers pubs_;
+  TimedEvent landing_zone_arrival_time_;
+  WaypointBuffer search_buffer_;
 
   inline double ConvertRawGPSToDegrees(const int32_t raw) {
     return (double)raw / 1e7;
@@ -196,6 +206,7 @@ class StarlingOffboard : public rclcpp::Node {
   void PubTransforms();
   bool HasDetectedTag();
   bool HasReachedYaw();
+  void CreateSearchWaypoints();
 
   /**
    * @brief Transform the position from mission frame to NED
