@@ -39,58 +39,6 @@ void StarlingOffboard::ComputeLocalMissionTransform() {
   RCLCPP_DEBUG(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
 }
 
-void StarlingOffboard::ComputeExtrinsicTransforms() {
-  T_imu_cam_ << -1, 0, 0, -0.08825, 0, -1, 0, -0.0045, 0, 0, 1, 0.00269, 0, 0, 0, 1;
-  T_cam_imu_ = T_imu_cam_.inverse();
-  T_body_imu_ << 1, 0, 0, 0.0295, 0, 1, 0, -0.0065, 0, 0, 1, -0.016, 0, 0, 0, 1;
-  T_imu_body_ = T_body_imu_.inverse();
-}
-
-void StarlingOffboard::ComputeLocalBodyTransform() {
-  Eigen::Quaterniond q(att_msg_.q[0], att_msg_.q[1], att_msg_.q[2], att_msg_.q[3]); // wxyz
-  Eigen::Matrix3d R = q.toRotationMatrix();
-  Eigen::Vector3d t(pos_msg_.x, pos_msg_.y, pos_msg_.z);
-  T_body_imu_.block<3, 3>(0, 0) = R;
-  T_body_imu_.block<3, 1>(0, 3) = t;
-  T_imu_body_ = T_body_imu_.inverse();
-}
-
-void StarlingOffboard::ComputeTagCamTransform() {
-  if (!tf_tag_cam_received_) {
-    return;
-  }
-  geometry_msgs::msg::TransformStamped tag_cam = tf_tag_cam_msg_.transforms[0];
-  Eigen::Isometry3d iso = tf2::transformToEigen(tag_cam);
-  T_tag_cam_ = iso.matrix();
-  T_cam_tag_ = T_tag_cam_.inverse();
-}
-
-void StarlingOffboard::ComputeTagLocalTransform() {
-  T_tag_ned_ = T_body_ned_ * T_imu_body_ * T_cam_imu_ * T_tag_cam_;
-  T_ned_tag_ = T_tag_ned_.inverse();
-}
-
-void StarlingOffboard::ComputeTagBodyTransform() {
-  T_tag_body_ = T_imu_body_ * T_cam_imu_ * T_tag_cam_;
-  T_body_tag_ = T_tag_body_.inverse();
-}
-
-// DEPRECATED
-//void StarlingOffboard::ComputeTagNedTransform() {
-//  // The AprilTag is located underneath the drone at takeoff.
-//  // Assume that the front of the drone xB is aligned with -yT the top of the
-//  // AprilTag Then T_tag_ned is defined by a rotation about the z-axis given by
-//  // the heading.
-//  Eigen::Matrix3d rot_mat_z =
-//      Eigen::AngleAxisd(-M_PI / 2 - azimuth_, Eigen::Vector3d::UnitZ())
-//          .toRotationMatrix();
-//  T_tag_ned_.block<3, 3>(0, 0) = rot_mat_z;
-//  T_ned_tag_ = T_tag_ned_.inverse();
-//  RCLCPP_WARN_ONCE(this->get_logger(), "Azimuth: %f", azimuth_);
-//  RCLCPP_WARN_ONCE(this->get_logger(), "T_tag_ned_:\n%s",
-//                   EigenToStr(T_tag_ned_).c_str());
-//}
-
 void StarlingOffboard::ComputeStartPosTakeoff() {
   Eigen::Vector4d current_mission_pos = TransformVec(
       Eigen::Vector4d(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0), T_ned_miss_);

@@ -30,10 +30,6 @@ find_package(sensor_msgs REQUIRED)
 find_package(rosbag2_cpp REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(async_pac_gnn_interfaces REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2_eigen REQUIRED)
-find_package(tf2_msgs REQUIRED)
 
 set(target_dependencies
   rclcpp
@@ -45,10 +41,6 @@ set(target_dependencies
   nav_msgs
   rosbag2_cpp
   async_pac_gnn_interfaces
-  tf2
-  tf2_ros
-  tf2_eigen
-  tf2_msgs
   )
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -41,7 +41,6 @@ struct Subscriptions {
   rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr
       vehicle_global_pos;
   rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
-  rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr tf_tag_cam;
   rclcpp::Subscription<async_pac_gnn_interfaces::msg::MissionControl>::SharedPtr
       mission_control;
 };
@@ -55,6 +54,5 @@ struct Publishers {
   rclcpp::Publisher<px4_msgs::msg::OffboardControlMode>::SharedPtr
       offboard_control_mode;
   rclcpp::Publisher<px4_msgs::msg::VehicleCommand>::SharedPtr vehicle_command;
-  rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr transform_tag_ned;
 };
 }  // namespace pac_ws::starling_offboard

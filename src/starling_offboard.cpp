@@ -130,25 +130,6 @@ void StarlingOffboard::InitializeSubscribers() {
                 att_msg_ = *msg;
                 att_msg_received_ = true;
               });
-  subs_.tf_tag_cam =
-      this->create_subscription<tf2_msgs::msg::TFMessage>(
-          "/tf", qos_,
-              [this](const tf2_msgs::msg::TFMessage::SharedPtr msg) {
-                tf_tag_cam_msg_ = *msg;
-                RCLCPP_INFO_ONCE(this->get_logger(), "Transform received");
-                if (!tf_tag_cam_msg_.transforms.empty()) {
-                    tf_tag_cam_received_ = true;
-                }
-              });
-  // subs_.mission_origin_gps = 
-  //     this->create_subscription<geometry_msgs::msg::Point>(
-  //             "/mission_origin_gps", qos_,
-  //             [this](const geometry_msgs::msg::Point::SharedPtr msg) {
-  //               mission_origin_lon_ = msg->x;
-  //               mission_origin_lat_ = msg->y;
-  //               heading_ = msg->z;
-  //               origin_gps_received_ = true;
-  //             });
   subs_.mission_control = 
       this->create_subscription<async_pac_gnn_interfaces::msg::MissionControl>(
               "/mission_control", 10,
@@ -180,9 +161,6 @@ void StarlingOffboard::InitializePublishers() {
   pubs_.traj_setpoint =
       this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(
           "fmu/in/trajectory_setpoint", params_.buffer_size);
-  pubs_.transform_tag_ned = 
-      this->create_publisher<tf2_msgs::msg::TFMessage>(
-              "transform_tag_ned", params_.buffer_size);
   status_timer_ = this->create_wall_timer(
       intervals_.Long, std::bind(&StarlingOffboard::StatusTimerCallback, this));
 }
@@ -191,10 +169,6 @@ void StarlingOffboard::InitializePublishers() {
  * @brief Main Loop
  */
 void StarlingOffboard::TimerCallback() {
-  if (att_msg_received_ && pos_msg_received_){
-      ComputeLocalBodyTransform();
-  }
-
   // Geofence check
   if(geofence_) {
     if (geofence_is_set_) {
@@ -250,7 +224,6 @@ void StarlingOffboard::TimerCallback() {
       RCLCPP_DEBUG(this->get_logger(), "lon: %.8f", launch_gps_lon_);
 
       ComputeLocalMissionTransform();
-      ComputeExtrinsicTransforms();
       ComputeStartPosTakeoff();
 
       RCLCPP_WARN_ONCE(this->get_logger(), "kP: %f", params_.kP);
@@ -261,7 +234,6 @@ void StarlingOffboard::TimerCallback() {
     }
 
     case State::PREFLT:
-      RCLCPP_INFO_ONCE(this->get_logger(), "Received tag_wrt_cam tf? %d", tf_tag_cam_received_);
       if (ob_takeoff_ && ob_enable_) {
         if (geofence_ && !geofence_is_set_) {
           RCLCPP_WARN(this->get_logger(), "Geofence is requested but not set. Will not arm. Is get_system_info service available?");
@@ -332,7 +304,6 @@ void StarlingOffboard::TimerCallback() {
       stop_vel_[2] = -1.0 * err_z;
         ClampVelocity(params_.max_speed, stop_vel_);
         PubTrajSetpointVel(stop_vel_);
-        //RCLCPP_INFO(this->get_logger(), "Mission velocity update timeout; stop velocity (%f, %f, %f)", stop_vel_[0], stop_vel_[1], stop_vel_[2]);
       }
       else {
         PubTrajSetpointVel(vel_ned_);
@@ -356,13 +327,6 @@ void StarlingOffboard::TimerCallback() {
       break;
 
     case State::LANDING_V:
-      ComputeTagCamTransform();
-      ComputeTagLocalTransform();
-      ComputeTagBodyTransform();
-      if (params_.debug){
-          PubTransforms();
-      }
-
       reached_land_pos_v_ =
         HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
       reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
@@ -372,19 +336,8 @@ void StarlingOffboard::TimerCallback() {
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       }
       else{
-          if (tf_tag_cam_received_ && !sent_p_ned) {
-            yaw_ = -std::atan2(T_tag_body_(1, 0), T_tag_body_(0, 0)); // Assumption, only correcting yaw
-            const Eigen::Vector4d p_tag(0,0,0,1); // The position of the tag in the fixed frame.
-            Eigen::Vector4d p_ned = TransformVec(p_tag, T_tag_ned_);
-            RCLCPP_INFO(this->get_logger(), "p_ned: %s" , EigenToStr(p_ned).c_str());
-            PubOffboardControlMode(ControlMode::POS);
-            PubTrajSetpointPos(p_ned);
-            sent_p_ned = true;
-          }
-          else {
-            PubOffboardControlMode(ControlMode::VEL);
-            PubTrajSetpointVel(land_vel_);
-          }
+        PubOffboardControlMode(ControlMode::VEL);
+        PubTrajSetpointVel(land_vel_);
       }
       break;
 
@@ -660,42 +613,6 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
   msg.timestamp =
       static_cast<uint64_t>(this->get_clock()->now().nanoseconds() / 1000);
   pubs_.vehicle_command->publish(msg);
-}
-
-inline geometry_msgs::msg::TransformStamped TFMessageBuilder(const Eigen::Matrix4d T,
-                                                             const std::string& frame_id, 
-                                                             const std::string& child_id, 
-                                                             const rclcpp::Time& stamp) {
-    geometry_msgs::msg::TransformStamped msg{};
-    // Make sure the rotation is orthonormal (correct numerical errors)
-    Eigen::Vector3d t = T.block<3,1>(0, 3);
-    Eigen::Matrix3d R_raw = T.block<3,3>(0, 0);
-    Eigen::JacobiSVD<Eigen::Matrix3d> svd(R_raw, Eigen::ComputeFullU | Eigen::ComputeFullV);
-    Eigen::Matrix3d R = svd.matrixU() * svd.matrixV().transpose();
-    // reflection; wrong handedness
-    if (R.determinant() < 0){
-        Eigen::Matrix3d U = svd.matrixU();
-        U.col(2) *= -1; // switch handedness
-        R = U * svd.matrixV().transpose();
-    }
-    Eigen::Quaterniond q(R);
-    msg.header.stamp = stamp;
-    msg.header.frame_id = frame_id;
-    msg.child_frame_id = child_id;
-    msg.transform.translation.x = t(0);
-    msg.transform.translation.y = t(1);
-    msg.transform.translation.z = t(2);
-    msg.transform.rotation.x = q.x();
-    msg.transform.rotation.y = q.y();
-    msg.transform.rotation.z = q.z();
-    msg.transform.rotation.w = q.w();
-    return msg;
-}
-
-void StarlingOffboard::PubTransforms() {
-    tf2_msgs::msg::TFMessage msg{};
-    msg.transforms.emplace_back(TFMessageBuilder(T_tag_ned_, "tag", "ned", this->now()));
-    pubs_.transform_tag_ned->publish(msg);
 }
 
 }  // namespace pac_ws::starling_offboard
