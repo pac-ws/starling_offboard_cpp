@@ -43,7 +43,7 @@ launch:
       default: '10.0'
   - arg:
       name: 'debug'
-      default: false
+      default: 'false'
 
   - node:
       pkg: 'starling_offboard_cpp'
@@ -79,4 +79,4 @@ launch:
         - name: 'fence_y_buf_t'
           value: '$(var fence_y_buf_t)'
         - name: 'debug'
-          value: '$(debug)'
+          value: '$(var debug)'
