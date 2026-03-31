@@ -77,10 +77,10 @@ void StarlingOffboard::GetNodeParameters() {
   this->declare_parameter<bool>("debug", false);
   this->get_parameter("debug", params_.debug);
 
-  this->declare_parameter<bool>("stationary_thresh", false);
+  this->declare_parameter<double>("stationary_thresh", 0.1);
   this->get_parameter("stationary_thresh", params_.stationary_thresh);
 
-  this->declare_parameter<bool>("landing_offset_y", false);
+  this->declare_parameter<double>("landing_offset_y", 2.0);
   this->get_parameter("landing_offset_y", params_.landing_offset_y);
 }
 

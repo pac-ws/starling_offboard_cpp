@@ -42,6 +42,15 @@ launch:
       name: 'fence_y_buf_t'
       default: '10.0'
   - arg:
+      name: 'land_vel_z'
+      default: '0.5'
+  - arg:
+      name: 'stationary_thresh'
+      default: '0.1'
+  - arg:
+      name: 'landing_offset_y'
+      default: '2.0'
+  - arg:
       name: 'debug'
       default: 'false'
 
@@ -78,5 +87,11 @@ launch:
           value: '$(var fence_y_buf_b)'
         - name: 'fence_y_buf_t'
           value: '$(var fence_y_buf_t)'
+        - name: 'land_vel_z'
+          value: '$(var land_vel_z)'
+        - name: 'stationary_thresh'
+          value: '$(var stationary_thresh)'
+        - name: 'landing_offset_y'
+          value: '$(var landing_offset_y)'
         - name: 'debug'
           value: '$(var debug)'
