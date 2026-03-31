@@ -79,6 +79,9 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<bool>("stationary_thresh", false);
   this->get_parameter("stationary_thresh", params_.stationary_thresh);
+
+  this->declare_parameter<bool>("landing_offset_y", false);
+  this->get_parameter("landing_offset_y", params_.landing_offset_y);
 }
 
 void StarlingOffboard::InitializeGeofence(){
@@ -334,7 +337,10 @@ void StarlingOffboard::TimerCallback() {
 
       if (reached_land_pos_h_) {
         descent_started_ = false;
-        descent_time_ = 1.5 * (-pos_msg_.z / params_.land_vel_z); // Est. descent time with fudge factor (z is negative in NED)
+        if (params_.land_vel_z > 0.0)
+            descent_time_ = 1.5 * (-pos_msg_.z / params_.land_vel_z); // Est. descent time with fudge factor (z is negative in NED)
+        else
+            descent_time_ = 30.0; // Default time
         descent_start_time_ = clock_->now();
 
         state_ = State::LANDING_V;

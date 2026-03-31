@@ -110,7 +110,6 @@ void StarlingOffboard::GetMissionOriginGPS() {
           sc->state = ServiceState::START;
           return;
         }
-        std::vector<double> launch_gps = result->values[0].double_array_value;
         lat = result->values[0].double_value;
         lon = result->values[1].double_value;
         heading = result->values[2].double_value;

@@ -25,10 +25,8 @@ struct Params {
   double fence_x_buf_r = 10.0;
   double fence_y_buf_b = 10.0;
   double fence_y_buf_t = 10.0;
-  double kP_land = 1.0;
-  double kD_land = 0.1;
-  double landing_offset_y = 2.0;
   double stationary_thresh = 0.1;
+  double landing_offset_y = 2.0;
   bool debug = false;
 };
 

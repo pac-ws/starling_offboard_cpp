@@ -86,7 +86,7 @@ void StarlingOffboard::ComputeStartPosTakeoff() {
   RCLCPP_DEBUG(
     this->get_logger(),
     "Landing Pos (Mission Frame): %s",
-    EigenToStr(takeoff_pos_).c_str()
+    EigenToStr(landing_pos_).c_str()
   );
 
   landing_pos_ned_ = TransformVec(landing_pos_, T_miss_ned_);

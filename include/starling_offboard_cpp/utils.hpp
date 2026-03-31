@@ -9,7 +9,9 @@ namespace pac_ws::starling_offboard {
  */
 inline Eigen::Vector4d PDController(
     px4_msgs::msg::VehicleLocalPosition curr_pos,
-    const Eigen::Vector4d& target_pos, const double kP = 1.0) {
+    const Eigen::Vector4d& target_pos,
+    const double kP = 1.0
+) {
   double err_x = (curr_pos.x - target_pos[0]);
   double err_y = (curr_pos.y - target_pos[1]);
   double err_z = (curr_pos.z - target_pos[2]);
@@ -22,14 +24,18 @@ inline Eigen::Vector4d PDController(
 /**
  * @brief Check if the drone has reached the target position within tolerance
  */
-inline bool HasReachedPos(px4_msgs::msg::VehicleLocalPosition curr_pos,
-                          const Eigen::Vector4d& target_pos,
-                          double tolerance = 1.0) {
-  const double err_x = std::abs(curr_pos.x - target_pos[0]);
-  const double err_y = std::abs(curr_pos.y - target_pos[1]);
-  const double err_z = std::abs(curr_pos.z - target_pos[2]);
+inline bool HasReachedPos(
+        px4_msgs::msg::VehicleLocalPosition curr_pos,
+        const Eigen::Vector4d& target_pos,
+        double tolerance = 1.0
+) {
+  const Eigen::Vector3d err(
+            curr_pos.x - target_pos[0],
+            curr_pos.y - target_pos[1],
+            curr_pos.z - target_pos[2]
+  );
 
-  return err_x < tolerance && err_y < tolerance && err_z < tolerance;
+  return err.norm() < tolerance;
 }
 
 inline void ClampVelocity(const double max_speed,

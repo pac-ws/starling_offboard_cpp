@@ -49,7 +49,7 @@ class StarlingOffboard : public rclcpp::Node {
   // --------------- PX4 Offboard --------------- 
   // Number of waypoints to set before attempting to enter offboard mode
   size_t offboard_setpoint_counter_ = 0;
-  uint8_t arming_state_;
+  uint8_t arming_state_ = 0;
 
   // --------------- Service Clients --------------- 
   std::shared_ptr<ServiceClient<rcl_interfaces::srv::GetParameters>> launch_gps_sc_;
