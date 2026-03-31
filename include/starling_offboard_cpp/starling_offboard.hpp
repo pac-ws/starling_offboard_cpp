@@ -38,8 +38,6 @@
 #include "utils.hpp"
 
 namespace pac_ws::starling_offboard {
-// using namespace std::chrono;
-// using namespace std::chrono_literals;
 using namespace px4_msgs::msg;
 
 class StarlingOffboard : public rclcpp::Node {
@@ -48,24 +46,24 @@ class StarlingOffboard : public rclcpp::Node {
   StarlingOffboard();
 
  private:
+  // --------------- PX4 Offboard --------------- 
   // Number of waypoints to set before attempting to enter offboard mode
   size_t offboard_setpoint_counter_ = 0;
-  nav_msgs::msg::Path path_;
   uint8_t arming_state_;
 
-  // Mission Control
+  // --------------- Service Clients --------------- 
+  std::shared_ptr<ServiceClient<rcl_interfaces::srv::GetParameters>> launch_gps_sc_;
+  std::shared_ptr<ServiceClient<rcl_interfaces::srv::GetParameters>> mission_origin_gps_sc_;
+  std::shared_ptr<ServiceClient<async_pac_gnn_interfaces::srv::SystemInfo>> system_info_sc_;
+  
+  // --------------- Mission Control Flags--------------- 
   async_pac_gnn_interfaces::msg::MissionControl mission_control_;
   bool ob_enable_ = false;
   bool ob_takeoff_ = false;
   bool ob_land_ = false;
   bool geofence_ = false;
 
-  bool breach_ = false;
-
-  std::shared_ptr<ServiceClient<rcl_interfaces::srv::GetParameters>> launch_gps_sc_;
-  std::shared_ptr<ServiceClient<rcl_interfaces::srv::GetParameters>> mission_origin_gps_sc_;
-  std::shared_ptr<ServiceClient<async_pac_gnn_interfaces::srv::SystemInfo>> system_info_sc_;
-
+  // --------------- State Flags --------------- 
   // bool origin_gps_received_ = false;
   bool mission_control_received_ = false;
   bool ned_cam_computed_ = false;
@@ -76,12 +74,18 @@ class StarlingOffboard : public rclcpp::Node {
   bool pos_msg_received_ = false;
   bool att_msg_received_ = false;
   bool sent_p_ned = false;
+  bool breach_ = false;
 
-  // GPS coordinates at the launch site
+  // --------------- Descent --------------- 
+  bool descent_started_ = false;
+  double descent_time_ = 0.0;
+  rclcpp::Time descent_start_time_;
+
+  // --------------- Launch Coords --------------- 
   double launch_gps_lat_;
   double launch_gps_lon_;
 
-  // GPS coordinates + heading of the mission origin (GCS)
+  // --------------- GCS Origin Coords --------------- 
   double mission_origin_lon_;
   double mission_origin_lat_;
   double heading_;
@@ -90,11 +94,14 @@ class StarlingOffboard : public rclcpp::Node {
   double yaw_;
   double alt_offset_;
 
+  // --------------- Transforms --------------- 
   Eigen::Matrix<double, 4, 4> T_miss_ned_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_ned_miss_ = Eigen::Matrix4d::Identity();
 
+  // --------------- State Machine --------------- 
   State state_ = State::INIT_START;
 
+  // --------------- Key Actions/Configurations --------------- 
   // Holds the current velocity from the mission to be sent to the px4
   Eigen::Vector4d vel_ned_ = Eigen::Vector4d::Unit(3);
   // Used to stop the drone when it reaches the waypoint
@@ -103,33 +110,43 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Vector4d start_pos_ned_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d takeoff_pos_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d takeoff_pos_ned_ = Eigen::Vector4d::Unit(3);
+  Eigen::Vector4d landing_pos_ = Eigen::Vector4d::Unit(3);
+  Eigen::Vector4d landing_pos_ned_ = Eigen::Vector4d::Unit(3);
   Eigen::Vector4d curr_position_ = Eigen::Vector4d::Unit(3);
 
+  // --------------- Mission Timeout --------------- 
   rclcpp::Time time_last_vel_update_;
 
-  // Timer drives the main loop
+  // --------------- Key Timers --------------- 
   rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::TimerBase::SharedPtr status_timer_;
-  rclcpp::TimerBase::SharedPtr path_pub_timer_;
   rclcpp::Clock::SharedPtr clock_;
 
+  // --------------- PX4 messages --------------- 
   px4_msgs::msg::VehicleAttitude att_msg_;
   px4_msgs::msg::VehicleLocalPosition pos_msg_;
   px4_msgs::msg::SensorGps gps_pos_msg_;
   px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
   geometry_msgs::msg::PoseStamped gnn_pose_;
 
+  // --------------- ROS QOS --------------- 
   rclcpp::QoS qos_;
 
+  // --------------- Geofence ---------------
   double fence_x_min_;
   double fence_x_max_;
   double fence_y_min_;
   double fence_y_max_;
+  double fence_recovery_x_min_;
+  double fence_recovery_x_max_;
+  double fence_recovery_y_min_;
+  double fence_recovery_y_max_;
   bool geofence_is_set_ = false;
 
+  // --------------- Scaling --------------- 
   double env_scale_factor_;
   double vel_scale_factor_;
 
+  // --------------- Helper Structs --------------- 
   Intervals intervals_;
   Params params_;
   Subscriptions subs_;
@@ -139,6 +156,7 @@ class StarlingOffboard : public rclcpp::Node {
     return (double)raw / 1e7;
   }
 
+  // --------------- Prototypes --------------- 
   void GetNodeParameters();
   void InitializeGeofence();
   void GetSystemInfo();
@@ -159,7 +177,6 @@ class StarlingOffboard : public rclcpp::Node {
   void GeofenceCheck();
   void TimerCallback();
   void StatusTimerCallback();
-  void PathPublisherTimerCallback();
   Eigen::Vector4d ComputeVel(const Eigen::Vector4d& target_pos);
   void VehicleLocalPosCallback(
       const px4_msgs::msg::VehicleLocalPosition::SharedPtr);

@@ -27,32 +27,25 @@ struct Params {
   double fence_y_buf_t = 10.0;
   double kP_land = 1.0;
   double kD_land = 0.1;
+  double landing_offset_y = 2.0;
+  double stationary_thresh = 0.1;
   bool debug = false;
 };
 
 struct Subscriptions {
   rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel;
-  // rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr mission_origin_gps;
-  // rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr launch_gps;
   rclcpp::Subscription<px4_msgs::msg::VehicleAttitude>::SharedPtr vehicle_attitude;
   rclcpp::Subscription<px4_msgs::msg::VehicleStatus>::SharedPtr vehicle_status;
-  rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr
-      vehicle_local_pos;
-  rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr
-      vehicle_global_pos;
+  rclcpp::Subscription<px4_msgs::msg::VehicleLocalPosition>::SharedPtr vehicle_local_pos;
+  rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr vehicle_global_pos;
   rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
-  rclcpp::Subscription<async_pac_gnn_interfaces::msg::MissionControl>::SharedPtr
-      mission_control;
+  rclcpp::Subscription<async_pac_gnn_interfaces::msg::MissionControl>::SharedPtr mission_control;
 };
 
 struct Publishers {
-  rclcpp::Publisher<async_pac_gnn_interfaces::msg::RobotStatus>::SharedPtr
-      status;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr nav_path;
   rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr traj_setpoint;
-  rclcpp::Publisher<px4_msgs::msg::OffboardControlMode>::SharedPtr
-      offboard_control_mode;
+  rclcpp::Publisher<px4_msgs::msg::OffboardControlMode>::SharedPtr offboard_control_mode;
   rclcpp::Publisher<px4_msgs::msg::VehicleCommand>::SharedPtr vehicle_command;
 };
 }  // namespace pac_ws::starling_offboard

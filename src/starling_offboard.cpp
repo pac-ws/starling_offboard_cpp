@@ -16,11 +16,6 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
 
   land_vel_[2] = params_.land_vel_z;
 
-  // z_takeoff is the altitude set by the user
-  // alt_offset_'s value is produced by homify to account for altitude offsets on the ground.
-  // RCLCPP_INFO(this->get_logger(), "Takeoff position: %f, %f, %f", params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_);
-  // takeoff_pos_ << params_.x_takeoff, params_.y_takeoff, params_.z_takeoff + alt_offset_, 1.0;
-
   GetLaunchGPS();
   GetMissionOriginGPS();
   GetSystemInfo();
@@ -81,6 +76,9 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<bool>("debug", false);
   this->get_parameter("debug", params_.debug);
+
+  this->declare_parameter<bool>("stationary_thresh", false);
+  this->get_parameter("stationary_thresh", params_.stationary_thresh);
 }
 
 void StarlingOffboard::InitializeGeofence(){
@@ -88,8 +86,13 @@ void StarlingOffboard::InitializeGeofence(){
   fence_x_max_ = params_.world_size / env_scale_factor_ + params_.fence_x_buf_r;
   fence_y_min_ = -params_.fence_y_buf_b;
   fence_y_max_ = params_.world_size / env_scale_factor_ + params_.fence_y_buf_t;
+  fence_recovery_x_min_ = fence_x_min_ + params_.fence_x_buf_l * 0.5;
+  fence_recovery_x_max_ = fence_x_max_ - params_.fence_x_buf_r * 0.5;
+  fence_recovery_y_min_ = fence_y_min_ + params_.fence_y_buf_b * 0.5;
+  fence_recovery_y_max_ = fence_y_max_ - params_.fence_y_buf_t * 0.5;
   RCLCPP_INFO(this->get_logger(), "Geofence initialized:");
   RCLCPP_INFO(this->get_logger(), "Dimensions (L, R, B, T): %f, %f, %f, %f", fence_x_min_, fence_x_max_, fence_y_min_, fence_y_max_);
+  RCLCPP_INFO(this->get_logger(), "Recovery targets (L, R, B, T): %f, %f, %f, %f", fence_recovery_x_min_, fence_recovery_x_max_, fence_recovery_y_min_, fence_recovery_y_max_);
 }
 
 void StarlingOffboard::InitializeSubscribers() {
@@ -150,9 +153,6 @@ void StarlingOffboard::InitializePublishers() {
       rmw_qos_profile_default.history, params_.buffer_size));
   qos_reliable.reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE);
 
-  pubs_.status =
-      this->create_publisher<async_pac_gnn_interfaces::msg::RobotStatus>("status", qos_);
-
   pubs_.offboard_control_mode =
       this->create_publisher<px4_msgs::msg::OffboardControlMode>(
           "fmu/in/offboard_control_mode", params_.buffer_size);
@@ -161,8 +161,6 @@ void StarlingOffboard::InitializePublishers() {
   pubs_.traj_setpoint =
       this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(
           "fmu/in/trajectory_setpoint", params_.buffer_size);
-  status_timer_ = this->create_wall_timer(
-      intervals_.Long, std::bind(&StarlingOffboard::StatusTimerCallback, this));
 }
 
 /**
@@ -191,6 +189,7 @@ void StarlingOffboard::TimerCallback() {
       break;
     }
 
+
     case State::INIT_GPS: {
       if (launch_gps_sc_->Done()) {
         RCLCPP_INFO(this->get_logger(), "Launch GPS received");
@@ -198,6 +197,7 @@ void StarlingOffboard::TimerCallback() {
       }
       break;
     }
+
 
     case State::IDLE: {
       if (!mission_control_received_) {
@@ -233,6 +233,7 @@ void StarlingOffboard::TimerCallback() {
       break;
     }
 
+
     case State::PREFLT:
       if (ob_takeoff_ && ob_enable_) {
         if (geofence_ && !geofence_is_set_) {
@@ -243,6 +244,7 @@ void StarlingOffboard::TimerCallback() {
         RCLCPP_DEBUG(this->get_logger(), "yaw_: %f", yaw_);
       } 
       break;
+
 
     case State::ARMING:
       if (offboard_setpoint_counter_ == 10) {
@@ -286,11 +288,22 @@ void StarlingOffboard::TimerCallback() {
       }
       break;
     
+
     case State::MISSION: {
       if (ob_land_) {
         state_ = State::LANDING_H;
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
         RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
+        break;
+      }
+
+      if (breach_) {
+        // Push back to the nearest point halfway into the buffer zone
+        Eigen::Vector4d recovery = curr_position_;
+        recovery[0] = std::clamp(curr_position_[0], fence_recovery_x_min_, fence_recovery_x_max_);
+        recovery[1] = std::clamp(curr_position_[1], fence_recovery_y_min_, fence_recovery_y_max_);
+        PubOffboardControlMode(ControlMode::POS);
+        PubTrajSetpointPos(TransformVec(recovery, T_miss_ned_));
         break;
       }
 
@@ -301,7 +314,7 @@ void StarlingOffboard::TimerCallback() {
       rclcpp::Duration duration = time_now - time_last_vel_update_;
       if (duration.seconds() > 1.0) {
         double err_z = (pos_msg_.z + params_.z_takeoff);
-      stop_vel_[2] = -1.0 * err_z;
+        stop_vel_[2] = -1.0 * err_z;
         ClampVelocity(params_.max_speed, stop_vel_);
         PubTrajSetpointVel(stop_vel_);
       }
@@ -311,35 +324,54 @@ void StarlingOffboard::TimerCallback() {
       break;
     }
 
+
     case State::LANDING_H:
-      reached_land_pos_h_ = 
-        HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
+      reached_land_pos_h_ = HasReachedPos(
+              pos_msg_,
+              landing_pos_ned_,
+              params_.position_tolerance
+      );
+
       if (reached_land_pos_h_) {
+        descent_started_ = false;
+        descent_time_ = 1.5 * (-pos_msg_.z / params_.land_vel_z); // Est. descent time with fudge factor (z is negative in NED)
+        descent_start_time_ = clock_->now();
+
         state_ = State::LANDING_V;
         RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence initiated");
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       }
-      else{
+
+      else {
         // Lateral move to the takeoff position
         PubOffboardControlMode(ControlMode::POS);
-        PubTrajSetpointPos(takeoff_pos_ned_);
+        PubTrajSetpointPos(landing_pos_ned_);
       }
+
       break;
 
-    case State::LANDING_V:
-      reached_land_pos_v_ =
-        HasReachedPos(pos_msg_, start_pos_ned_, params_.position_tolerance);
-      reached_land_stationary_v_ = std::abs(pos_msg_.vz) < 0.1;
-      if (reached_land_pos_v_ && reached_land_stationary_v_) {
+
+    case State::LANDING_V: {
+      reached_land_stationary_v_ = std::abs(pos_msg_.vz) < params_.stationary_thresh;
+
+      rclcpp::Time time_now = clock_->now();
+      rclcpp::Duration duration = time_now - descent_start_time_;
+
+      if (duration.seconds() > descent_time_ || (reached_land_stationary_v_ && descent_started_)) {
         state_ =  State::DISARM;
         RCLCPP_WARN_ONCE(this->get_logger(), "Landing sequence finished");
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
       }
+
       else{
         PubOffboardControlMode(ControlMode::VEL);
         PubTrajSetpointVel(land_vel_);
+        descent_started_ = true;
       }
+
       break;
+    }
+
 
     case State::DISARM:
       if (arming_state_ == 2) {
@@ -351,63 +383,6 @@ void StarlingOffboard::TimerCallback() {
       // Need to restart the drone after landing so just spin in this state.
       break;
   }
-}
-
-void StarlingOffboard::StatusTimerCallback() {
-
-  auto status_msg = async_pac_gnn_interfaces::msg::RobotStatus();
-  status_msg.batt = 100; // TODO
-  status_msg.state = StateToString(state_);
-  status_msg.breach = breach_;
-  status_msg.gps_lat = global_pos_msg_.lat;
-  status_msg.gps_lon = global_pos_msg_.lon;
-  status_msg.gps_alt = global_pos_msg_.alt;
-  status_msg.gps_sats = gps_pos_msg_.satellites_used;
-  status_msg.gps_heading = gps_pos_msg_.heading;
-  status_msg.local_pos_x = pos_msg_.x;
-  status_msg.local_pos_y = pos_msg_.y;
-  status_msg.local_pos_z = pos_msg_.z;
-  status_msg.local_pos_heading = pos_msg_.heading;
-  status_msg.pose_x = gnn_pose_.pose.position.x;
-  status_msg.pose_y = gnn_pose_.pose.position.y;
-  status_msg.pose_z = gnn_pose_.pose.position.z;
-  status_msg.ned_vel_x = vel_ned_[0];
-  status_msg.ned_vel_y = vel_ned_[1];
-  status_msg.ned_vel_z = vel_ned_[2];
-  pubs_.status->publish(status_msg);
-}
-
-void StarlingOffboard::PathPublisherTimerCallback() {
-  // Publish the path
-  path_.header.stamp = this->get_clock()->now();
-  path_.header.frame_id = "map";
-
-  if (path_.poses.size() == 0) {
-    return;
-  }
-  if (std::abs(curr_position_[0]) < 0.01 &&
-      std::abs(curr_position_[1]) < 0.01) {
-    return;
-  }
-  Eigen::Vector4d scaled_pos = curr_position_ * env_scale_factor_;
-  geometry_msgs::msg::PoseStamped latest_pose = path_.poses.back();
-  double max_dist =
-      std::max(std::abs(latest_pose.pose.position.x - scaled_pos[0]),
-               std::abs(latest_pose.pose.position.y - scaled_pos[1]));
-  max_dist =
-      std::max(max_dist, std::abs(latest_pose.pose.position.z - scaled_pos[2]));
-  if (max_dist < 1) {
-    pubs_.nav_path->publish(path_);
-    return;
-  }
-  latest_pose.header.stamp = this->get_clock()->now();
-  latest_pose.header.frame_id = "map";
-
-  latest_pose.pose.position.x = scaled_pos[0];
-  latest_pose.pose.position.y = scaled_pos[1];
-  latest_pose.pose.position.z = scaled_pos[2];
-  path_.poses.push_back(latest_pose);
-  pubs_.nav_path->publish(path_);
 }
 
 /**
@@ -489,19 +464,26 @@ void StarlingOffboard::PubOffboardControlMode(const StarlingOffboard::ControlMod
  */
 void StarlingOffboard::PubTrajSetpointVel(const Eigen::Vector4d& target_vel) {
   TrajectorySetpoint msg{};
-  msg.position = {std::nanf(""), std::nanf(""),
-                  std::nanf("")};  // required for vel control in px4
-  if (ob_enable_ && !breach_) {
-      msg.velocity = {static_cast<float>(target_vel[0]),
-                      static_cast<float>(target_vel[1]),
-                      static_cast<float>(target_vel[2])
+  msg.position = {
+      std::nanf(""),
+      std::nanf(""),
+      std::nanf("")
+  };  // required for vel control in px4
+
+  if (ob_enable_ && (!breach_ || descent_started_)) {
+      msg.velocity = {
+          static_cast<float>(target_vel[0]),
+          static_cast<float>(target_vel[1]),
+          static_cast<float>(target_vel[2])
       };
   }
-  // Hold position if not enabled or breach
+  
+  // Hold position if not enabled or breach (except if landing_v)
   else {
-      msg.velocity = {static_cast<float>(0.0),
-                      static_cast<float>(0.0),
-                      static_cast<float>(0.0)
+      msg.velocity = {
+          static_cast<float>(0.0),
+          static_cast<float>(0.0),
+          static_cast<float>(0.0)
       };
 }
   msg.yaw = static_cast<float>(yaw_);  // [-PI:PI]
@@ -540,8 +522,7 @@ void StarlingOffboard::UpdateVel(
 }
 
 /**
- * @brief Publish the pose (PoseStamped) to the GNN. Publishing the path as well
- * for visualization
+ * @brief Publish the pose (PoseStamped) to the GNN.
  */
 void StarlingOffboard::VehicleLocalPosCallback(
     const px4_msgs::msg::VehicleLocalPosition::SharedPtr pos_msg) {
@@ -555,22 +536,6 @@ void StarlingOffboard::VehicleLocalPosCallback(
     const Eigen::Vector4d vehicle_mission_position =
         TransformVec(pos_vec, T_ned_miss_);
     curr_position_ = vehicle_mission_position;
-    if (path_.poses.size() == 0 && false) {
-      if (std::abs(curr_position_[0]) < 1. &&
-          std::abs(curr_position_[1]) < 1.) {
-        return;
-      }
-      if (curr_position_[0] != 0 && curr_position_[1] != 0 &&
-          curr_position_[2] != 0) {
-        //geometry_msgs::msg::PoseStamped gnn_pose;
-        gnn_pose_.header.stamp = this->get_clock()->now();
-        gnn_pose_.header.frame_id = "map";
-        gnn_pose_.pose.position.x = vehicle_mission_position[0];
-        gnn_pose_.pose.position.y = vehicle_mission_position[1];
-        gnn_pose_.pose.position.z = vehicle_mission_position[2];
-        path_.poses.push_back(gnn_pose_);
-      }
-    }
 
     // Publish the current pose
     //geometry_msgs::msg::PoseStamped gnn_pose_;

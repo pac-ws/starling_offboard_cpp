@@ -39,12 +39,18 @@ void StarlingOffboard::ComputeLocalMissionTransform() {
   RCLCPP_DEBUG(this->get_logger(), "Translation: %f, %f, %f", x, y, z);
 }
 
+
 void StarlingOffboard::ComputeStartPosTakeoff() {
+
   Eigen::Vector4d current_mission_pos = TransformVec(
-      Eigen::Vector4d(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0), T_ned_miss_);
+    Eigen::Vector4d(pos_msg_.x, pos_msg_.y, pos_msg_.z, 1.0),
+    T_ned_miss_
+  );
+
   RCLCPP_INFO(this->get_logger(), "Current mission pos: %s",
               EigenToStr(current_mission_pos).c_str());
 
+  //--------------- Save Takeoff Location ---------------  
   takeoff_pos_[0] = current_mission_pos[0];
   takeoff_pos_[1] = current_mission_pos[1];
   takeoff_pos_[2] = params_.z_takeoff + alt_offset_;
@@ -68,5 +74,23 @@ void StarlingOffboard::ComputeStartPosTakeoff() {
 
   start_pos_ned_[0] = takeoff_pos_ned_[0];
   start_pos_ned_[1] = takeoff_pos_ned_[1];
+
+  //--------------- Save Landing Location ---------------  
+  // Landing location is offset from takeoff to avoid hitting the elevated launch pad.
+  // This is a temporary solution until we integrate precision landing
+  landing_pos_[0] = current_mission_pos[0];
+  landing_pos_[1] = current_mission_pos[1] + params_.landing_offset_y;
+  landing_pos_[2] = params_.z_takeoff + alt_offset_;
+  landing_pos_[3] = 1.0;
+
+  RCLCPP_DEBUG(
+    this->get_logger(),
+    "Landing Pos (Mission Frame): %s",
+    EigenToStr(takeoff_pos_).c_str()
+  );
+
+  landing_pos_ned_ = TransformVec(landing_pos_, T_miss_ned_);
 }
+
+
 } // namespace pac_ws::starling_offboard
