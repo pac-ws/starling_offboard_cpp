@@ -280,6 +280,8 @@ void StarlingOffboard::TimerCallback() {
         HasReachedPos(pos_msg_, takeoff_pos_ned_, params_.position_tolerance);
       if (takeoff_completed_) {
         PubOffboardControlMode(ControlMode::VEL);
+        double err_z = pos_msg_.z - takeoff_pos_ned_[2];
+        stop_vel_[2] = -params_.kP * err_z;
         PubTrajSetpointVel(stop_vel_);
         state_ = State::MISSION;
         RCLCPP_INFO(this->get_logger(), "State: %s", StateToString(state_).c_str());
@@ -305,8 +307,10 @@ void StarlingOffboard::TimerCallback() {
         Eigen::Vector4d recovery = curr_position_;
         recovery[0] = std::clamp(curr_position_[0], fence_recovery_x_min_, fence_recovery_x_max_);
         recovery[1] = std::clamp(curr_position_[1], fence_recovery_y_min_, fence_recovery_y_max_);
+        Eigen::Vector4d recovery_ned = TransformVec(recovery, T_miss_ned_);
+        recovery_ned[2] = takeoff_pos_ned_[2];
         PubOffboardControlMode(ControlMode::POS);
-        PubTrajSetpointPos(TransformVec(recovery, T_miss_ned_));
+        PubTrajSetpointPos(recovery_ned);
         break;
       }
 
@@ -316,8 +320,8 @@ void StarlingOffboard::TimerCallback() {
       rclcpp::Time time_now = clock_->now();
       rclcpp::Duration duration = time_now - time_last_vel_update_;
       if (duration.seconds() > 1.0) {
-        double err_z = (pos_msg_.z + params_.z_takeoff);
-        stop_vel_[2] = -1.0 * err_z;
+        double err_z = pos_msg_.z - takeoff_pos_ned_[2];
+        stop_vel_[2] = -params_.kP * err_z;
         ClampVelocity(params_.max_speed, stop_vel_);
         PubTrajSetpointVel(stop_vel_);
       }
@@ -404,8 +408,14 @@ void StarlingOffboard::Arm() {
  * @brief Send a command to Disarm the vehicle
  */
 void StarlingOffboard::Disarm() {
-  PubVehicleCommand(VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0, 0.0,
-                    0.0, 0.0, 0.0);
+  PubVehicleCommand(
+          VehicleCommand::VEHICLE_CMD_COMPONENT_ARM_DISARM,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+  );
   RCLCPP_INFO_ONCE(this->get_logger(), "Disarm command send");
 }
 
@@ -430,7 +440,12 @@ void StarlingOffboard::GeofenceCheck() {
       breach_ = true;
     }
     else{
-        breach_ = false;
+      if (breach_) {
+        // Stale the vel timestamp so stop_vel_ is used on resume, not the last GNN velocity
+        time_last_vel_update_ = clock_->now() - rclcpp::Duration::from_seconds(2.0);
+        RCLCPP_INFO(this->get_logger(), "Geofence breach cleared.");
+      }
+      breach_ = false;
     }
   }
   // In case Geofence is turned off mid-flight
@@ -510,6 +525,7 @@ void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
   if (ob_enable_) {
     pubs_.traj_setpoint->publish(msg);
   }
+  // Todo: not doing breach check here ok?
 }
 
 /**
@@ -517,7 +533,7 @@ void StarlingOffboard::PubTrajSetpointPos(const Eigen::Vector4d& target_pos) {
  */
 void StarlingOffboard::UpdateVel(
   const geometry_msgs::msg::TwistStamped::SharedPtr cmd_vel) {
-  const double err_z = (params_.z_takeoff + pos_msg_.z);
+  const double err_z = pos_msg_.z - takeoff_pos_ned_[2];
   const Eigen::Vector4d vel_mission(cmd_vel->twist.linear.x,
                                     cmd_vel->twist.linear.y, 
                                     params_.kP * err_z, 
