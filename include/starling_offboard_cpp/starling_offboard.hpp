@@ -98,8 +98,9 @@ class StarlingOffboard : public rclcpp::Node {
   Eigen::Matrix<double, 4, 4> T_miss_ned_ = Eigen::Matrix4d::Identity();
   Eigen::Matrix<double, 4, 4> T_ned_miss_ = Eigen::Matrix4d::Identity();
 
-  // --------------- State Machine --------------- 
+  // --------------- State Machine ---------------
   State state_ = State::INIT_START;
+  State last_published_state_ = State::INIT_START;
 
   // --------------- Key Actions/Configurations --------------- 
   // Holds the current velocity from the mission to be sent to the px4
@@ -176,7 +177,7 @@ class StarlingOffboard : public rclcpp::Node {
   void Disarm();
   void GeofenceCheck();
   void TimerCallback();
-  void StatusTimerCallback();
+  void PubStatus();
   Eigen::Vector4d ComputeVel(const Eigen::Vector4d& target_pos);
   void VehicleLocalPosCallback(
       const px4_msgs::msg::VehicleLocalPosition::SharedPtr);

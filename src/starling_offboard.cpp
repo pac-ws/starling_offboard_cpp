@@ -164,6 +164,13 @@ void StarlingOffboard::InitializePublishers() {
   pubs_.traj_setpoint =
       this->create_publisher<px4_msgs::msg::TrajectorySetpoint>(
           "fmu/in/trajectory_setpoint", params_.buffer_size);
+
+  auto qos_status = rclcpp::QoS(1)
+      .reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE)
+      .durability(RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL);
+  pubs_.robot_status =
+      this->create_publisher<async_pac_gnn_interfaces::msg::RobotStatus>(
+          "robot_status", qos_status);
 }
 
 /**
@@ -393,6 +400,11 @@ void StarlingOffboard::TimerCallback() {
       // Need to restart the drone after landing so just spin in this state.
       break;
   }
+
+  if (state_ != last_published_state_) {
+    PubStatus();
+    last_published_state_ = state_;
+  }
 }
 
 /**
@@ -600,6 +612,29 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
   msg.timestamp =
       static_cast<uint64_t>(this->get_clock()->now().nanoseconds() / 1000);
   pubs_.vehicle_command->publish(msg);
+}
+
+void StarlingOffboard::PubStatus() {
+  async_pac_gnn_interfaces::msg::RobotStatus msg{};
+  msg.state = StateToString(state_);
+  msg.breach = breach_;
+
+  msg.gps_lat = static_cast<float>(global_pos_msg_.lat);
+  msg.gps_lon = static_cast<float>(global_pos_msg_.lon);
+  msg.gps_alt = static_cast<float>(global_pos_msg_.alt);
+  msg.gps_sats = static_cast<int8_t>(gps_pos_msg_.satellites_used);
+  msg.gps_heading = static_cast<float>(azimuth_);
+
+  msg.local_pos_x = pos_msg_.x;
+  msg.local_pos_y = pos_msg_.y;
+  msg.local_pos_z = pos_msg_.z;
+  msg.local_pos_heading = static_cast<float>(azimuth_);
+
+  msg.ned_vel_x = pos_msg_.vx;
+  msg.ned_vel_y = pos_msg_.vy;
+  msg.ned_vel_z = pos_msg_.vz;
+
+  pubs_.robot_status->publish(msg);
 }
 
 }  // namespace pac_ws::starling_offboard

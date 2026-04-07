@@ -45,5 +45,6 @@ struct Publishers {
   rclcpp::Publisher<px4_msgs::msg::TrajectorySetpoint>::SharedPtr traj_setpoint;
   rclcpp::Publisher<px4_msgs::msg::OffboardControlMode>::SharedPtr offboard_control_mode;
   rclcpp::Publisher<px4_msgs::msg::VehicleCommand>::SharedPtr vehicle_command;
+  rclcpp::Publisher<async_pac_gnn_interfaces::msg::RobotStatus>::SharedPtr robot_status;
 };
 }  // namespace pac_ws::starling_offboard
