@@ -36,7 +36,8 @@ enum class State {
   MISSION,
   LANDING_H,
   LANDING_V,
-  DISARM
+  DISARM,
+  ERROR
 };
 
 inline std::string StateToString(State state) {
@@ -61,6 +62,8 @@ inline std::string StateToString(State state) {
       return "LANDING_V";
     case State::DISARM:
       return "DISARM";
+    case State::ERROR:
+      return "ERROR";
     default:
       return "INVALID";
   }

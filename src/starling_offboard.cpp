@@ -82,6 +82,9 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<double>("landing_offset_y", 2.0);
   this->get_parameter("landing_offset_y", params_.landing_offset_y);
+
+  this->declare_parameter<double>("px4_timeout", 15.0);
+  this->get_parameter("px4_timeout", params_.px4_timeout);
 }
 
 void StarlingOffboard::InitializeGeofence(){
@@ -194,6 +197,9 @@ void StarlingOffboard::TimerCallback() {
     case State::INIT_START: {
       InitializeSubscribers();
       InitializePublishers();
+      px4_deadline_ = this->now() + rclcpp::Duration::from_seconds(params_.px4_timeout);
+      last_status_pub_time_ = this->now();
+      diagnostic_ = "Waiting for PX4 local position...";
       RCLCPP_WARN(this->get_logger(), "Initialized pubs and subs");
       state_ = State::INIT_GPS;
       break;
@@ -201,8 +207,19 @@ void StarlingOffboard::TimerCallback() {
 
 
     case State::INIT_GPS: {
+      if (!pos_msg_received_) {
+        if (this->now() > px4_deadline_) {
+          diagnostic_ = "PX4 local position not received after " +
+            std::to_string(static_cast<int>(params_.px4_timeout)) +
+            "s. Check that PX4 services are running.";
+          RCLCPP_ERROR(this->get_logger(), "%s", diagnostic_.c_str());
+          state_ = State::ERROR;
+        }
+        break;
+      }
       if (launch_gps_sc_->Done()) {
         RCLCPP_INFO(this->get_logger(), "Launch GPS received");
+        diagnostic_ = "";
         state_ = State::IDLE;
       }
       break;
@@ -399,11 +416,20 @@ void StarlingOffboard::TimerCallback() {
       }
       // Need to restart the drone after landing so just spin in this state.
       break;
+
+
+    case State::ERROR: {
+      RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+        "%s", diagnostic_.c_str());
+      break;
+    }
   }
 
-  if (state_ != last_published_state_) {
+  if (state_ != last_published_state_ || diagnostic_ != last_published_diagnostic_) {
     PubStatus();
     last_published_state_ = state_;
+    last_published_diagnostic_ = diagnostic_;
+    last_status_pub_time_ = this->now();
   }
 }
 
@@ -617,6 +643,7 @@ void StarlingOffboard::PubVehicleCommand(uint32_t command, double param1,
 void StarlingOffboard::PubStatus() {
   async_pac_gnn_interfaces::msg::RobotStatus msg{};
   msg.state = StateToString(state_);
+  msg.diagnostic = diagnostic_;
   msg.breach = breach_;
 
   msg.gps_lat = static_cast<float>(global_pos_msg_.lat);

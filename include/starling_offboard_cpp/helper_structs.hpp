@@ -27,6 +27,7 @@ struct Params {
   double fence_y_buf_t = 10.0;
   double stationary_thresh = 0.1;
   double landing_offset_y = 2.0;
+  double px4_timeout = 15.0;
   bool debug = false;
 };
 

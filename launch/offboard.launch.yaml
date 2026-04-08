@@ -53,6 +53,9 @@ launch:
   - arg:
       name: 'debug'
       default: 'false'
+  - arg:
+      name: 'px4_timeout'
+      default: '15.0'
 
   - node:
       pkg: 'starling_offboard_cpp'
@@ -95,3 +98,5 @@ launch:
           value: '$(var landing_offset_y)'
         - name: 'debug'
           value: '$(var debug)'
+        - name: 'px4_timeout'
+          value: '$(var px4_timeout)'

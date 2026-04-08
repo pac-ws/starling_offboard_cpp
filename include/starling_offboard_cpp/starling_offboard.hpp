@@ -101,6 +101,10 @@ class StarlingOffboard : public rclcpp::Node {
   // --------------- State Machine ---------------
   State state_ = State::INIT_START;
   State last_published_state_ = State::INIT_START;
+  std::string diagnostic_;
+  std::string last_published_diagnostic_;
+  rclcpp::Time px4_deadline_;
+  rclcpp::Time last_status_pub_time_;
 
   // --------------- Key Actions/Configurations --------------- 
   // Holds the current velocity from the mission to be sent to the px4
