@@ -17,7 +17,7 @@ StarlingOffboard::StarlingOffboard() : Node("starling_offboard"), qos_(1) {
   land_vel_[2] = params_.land_vel_z;
 
   GetLaunchGPS();
-  GetMissionOriginGPS();
+  //GetMissionOriginGPS();
   GetSystemInfo();
 
   timer_ = this->create_wall_timer(
@@ -85,6 +85,9 @@ void StarlingOffboard::GetNodeParameters() {
 
   this->declare_parameter<double>("px4_timeout", 15.0);
   this->get_parameter("px4_timeout", params_.px4_timeout);
+
+  this->declare_parameter<double>("origin_timeout", 15.0);
+  this->get_parameter("origin_timeout", params_.origin_timeout);
 }
 
 void StarlingOffboard::InitializeGeofence(){
@@ -102,13 +105,6 @@ void StarlingOffboard::InitializeGeofence(){
 }
 
 void StarlingOffboard::InitializeSubscribers() {
-  subs_.vehicle_status =
-      this->create_subscription<px4_msgs::msg::VehicleStatus>(
-          "fmu/out/vehicle_status", qos_,
-          [this](const px4_msgs::msg::VehicleStatus::UniquePtr msg) {
-            arming_state_ = msg->arming_state;
-          });
-
   // Velocity Translation (TwistStamped [GNN] to TrajectorySetpoint [PX4])
   subs_.cmd_vel = this->create_subscription<geometry_msgs::msg::TwistStamped>(
       "cmd_vel", qos_,
@@ -139,6 +135,25 @@ void StarlingOffboard::InitializeSubscribers() {
                 att_msg_ = *msg;
                 att_msg_received_ = true;
               });
+  subs_.vehicle_status =
+      this->create_subscription<px4_msgs::msg::VehicleStatus>(
+          "fmu/out/vehicle_status", qos_,
+              [this](const px4_msgs::msg::VehicleStatus::SharedPtr msg) {
+                veh_status_msg_ = *msg;
+                arming_state_ = msg->arming_state;
+                armed_time_ = msg->armed_time;
+                takeoff_time_ = msg->takeoff_time;
+                stat_arming_reason_ = msg->latest_arming_reason;
+                stat_disarming_reason_ = msg->latest_disarming_reason;
+                stat_nav_state_ = msg->nav_state;
+                stat_nav_state_intention_ = msg->nav_state_user_intention;
+                failure_detector_ = msg->failure_detector_status;
+                failsafe_ = msg->failsafe;
+                gcs_conn_lost_ = msg->gcs_connection_lost;
+                safety_off_ = msg->safety_off;
+                pre_flight_checks_pass_ = msg->pre_flight_checks_pass;
+                veh_status_msg_received_ = true;
+              });
   subs_.mission_control = 
       this->create_subscription<async_pac_gnn_interfaces::msg::MissionControl>(
               "/mission_control", 10,
@@ -149,6 +164,15 @@ void StarlingOffboard::InitializeSubscribers() {
                 geofence_ = msg->geofence;
                 mission_control_received_ = true;
               });
+  subs_.mission_origin_gps = 
+      this->create_subscription<geometry_msgs::msg::Point>(
+              "/mission_origin_gps", 10, 
+              [this](const geometry_msgs::msg::Point::SharedPtr msg) {
+                mission_origin_lon_ = msg->x;
+                mission_origin_lat_ = msg->y;
+                heading_ = msg->z;
+                mission_origin_gps_received_ = true;
+                });
 }
 
 void StarlingOffboard::InitializePublishers() {
@@ -198,6 +222,7 @@ void StarlingOffboard::TimerCallback() {
       InitializeSubscribers();
       InitializePublishers();
       px4_deadline_ = this->now() + rclcpp::Duration::from_seconds(params_.px4_timeout);
+      origin_deadline_ = this->now() + rclcpp::Duration::from_seconds(params_.origin_timeout);
       last_status_pub_time_ = this->now();
       diagnostic_ = "Waiting for PX4 local position...";
       RCLCPP_WARN(this->get_logger(), "Initialized pubs and subs");
@@ -207,6 +232,16 @@ void StarlingOffboard::TimerCallback() {
 
 
     case State::INIT_GPS: {
+      if (!mission_origin_gps_received_) {
+          if (this->now() > origin_deadline_) {
+              diagnostic_ = "Mission origin not received after " +
+                std::to_string(static_cast<int>(params_.origin_timeout)) +
+                "s. Check that PX4 services are running.";
+              RCLCPP_ERROR(this->get_logger(), "%s", diagnostic_.c_str());
+              state_ = State::ERROR;
+          }
+          break;
+      }
       if (!pos_msg_received_) {
         if (this->now() > px4_deadline_) {
           diagnostic_ = "PX4 local position not received after " +
@@ -233,7 +268,7 @@ void StarlingOffboard::TimerCallback() {
       }
       RCLCPP_INFO_ONCE(this->get_logger(), "Mission control received.");
 
-      if (!mission_origin_gps_sc_->Done()) {
+      if (!mission_origin_gps_received_) {
           RCLCPP_WARN_ONCE(this->get_logger(), "Waiting for mission origin GPS...");
           break;
       }
@@ -425,7 +460,11 @@ void StarlingOffboard::TimerCallback() {
     }
   }
 
-  if (state_ != last_published_state_ || diagnostic_ != last_published_diagnostic_) {
+  if ((state_ <= State::PREFLT && (this->now().seconds() - last_status_pub_time_.seconds() >= 7.0)) || 
+        state_ != last_published_state_ ||
+        diagnostic_ != last_published_diagnostic_ ||
+        (breach_ && (this->now().seconds() - last_status_pub_time_.seconds() >= 3.0)))
+  {
     PubStatus();
     last_published_state_ = state_;
     last_published_diagnostic_ = diagnostic_;
@@ -660,6 +699,14 @@ void StarlingOffboard::PubStatus() {
   msg.ned_vel_x = pos_msg_.vx;
   msg.ned_vel_y = pos_msg_.vy;
   msg.ned_vel_z = pos_msg_.vz;
+
+  msg.pre_flight_checks_pass = pre_flight_checks_pass_;
+  msg.arming_state = arming_state_;
+  msg.disarming_reason = stat_disarming_reason_;
+  msg.nav_state = stat_nav_state_;
+  msg.gcs_conn_lost = gcs_conn_lost_;
+  msg.failure_detector_status = failure_detector_;
+  msg.safety_off = safety_off_;
 
   pubs_.robot_status->publish(msg);
 }

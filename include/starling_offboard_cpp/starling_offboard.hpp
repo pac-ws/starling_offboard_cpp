@@ -64,7 +64,7 @@ class StarlingOffboard : public rclcpp::Node {
   bool geofence_ = false;
 
   // --------------- State Flags --------------- 
-  // bool origin_gps_received_ = false;
+  bool mission_origin_gps_received_ = false;
   bool mission_control_received_ = false;
   bool ned_cam_computed_ = false;
   bool takeoff_completed_ = false;
@@ -73,8 +73,23 @@ class StarlingOffboard : public rclcpp::Node {
   bool reached_land_stationary_v_ = false;
   bool pos_msg_received_ = false;
   bool att_msg_received_ = false;
+  bool veh_status_msg_received_ = false;
   bool sent_p_ned = false;
   bool breach_ = false;
+  
+  // --------------- Vehicle Status Diagnostics --------------- 
+  int armed_time_ = -1;
+  int takeoff_time_ = -1;
+  uint8_t stat_arming_state_ = -1;
+  uint8_t stat_arming_reason_ = -1;
+  uint8_t stat_disarming_reason_ = -1;
+  uint8_t stat_nav_state_ = -1;
+  uint8_t stat_nav_state_intention_ = -1;
+  uint8_t failure_detector_ = -1;
+  bool failsafe_ = false;
+  bool gcs_conn_lost_ = false;
+  bool safety_off_ = false;
+  bool pre_flight_checks_pass_ = false;
 
   // --------------- Descent --------------- 
   bool descent_started_ = false;
@@ -104,6 +119,7 @@ class StarlingOffboard : public rclcpp::Node {
   std::string diagnostic_;
   std::string last_published_diagnostic_;
   rclcpp::Time px4_deadline_;
+  rclcpp::Time origin_deadline_;
   rclcpp::Time last_status_pub_time_;
 
   // --------------- Key Actions/Configurations --------------- 
@@ -131,6 +147,7 @@ class StarlingOffboard : public rclcpp::Node {
   px4_msgs::msg::VehicleLocalPosition pos_msg_;
   px4_msgs::msg::SensorGps gps_pos_msg_;
   px4_msgs::msg::VehicleGlobalPosition global_pos_msg_;
+  px4_msgs::msg::VehicleStatus veh_status_msg_;
   geometry_msgs::msg::PoseStamped gnn_pose_;
 
   // --------------- ROS QOS --------------- 

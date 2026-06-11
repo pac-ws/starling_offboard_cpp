@@ -28,6 +28,7 @@ struct Params {
   double stationary_thresh = 0.1;
   double landing_offset_y = 2.0;
   double px4_timeout = 15.0;
+  double origin_timeout = 15.0;
   bool debug = false;
 };
 
@@ -39,6 +40,7 @@ struct Subscriptions {
   rclcpp::Subscription<px4_msgs::msg::VehicleGlobalPosition>::SharedPtr vehicle_global_pos;
   rclcpp::Subscription<px4_msgs::msg::SensorGps>::SharedPtr vehicle_gps_pos;
   rclcpp::Subscription<async_pac_gnn_interfaces::msg::MissionControl>::SharedPtr mission_control;
+  rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr mission_origin_gps;
 };
 
 struct Publishers {
